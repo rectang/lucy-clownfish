@@ -39,28 +39,24 @@ use Carp;
 # in the current working directory, this is a CPAN distribution rather than a
 # checkout from version control and things live in different dirs.
 my $CHARMONIZER_C;
-my $LEMON_DIR;
 my $INCLUDE;
 my $CFC_SOURCE_DIR;
 my $IS_CPAN = -e 'LICENSE';
 if ($IS_CPAN) {
     $CHARMONIZER_C  = 'charmonizer.c';
     $INCLUDE        = 'include';
-    $LEMON_DIR      = 'lemon';
     $CFC_SOURCE_DIR = 'src';
 }
 else {
     $CHARMONIZER_C = catfile( updir(), 'common', 'charmonizer.c' );
     $INCLUDE        = catdir( updir(), 'include' );
-    $LEMON_DIR      = catdir( updir(), updir(), 'lemon' );
     $CFC_SOURCE_DIR = catdir( updir(), 'src' );
 }
-my $LEMON_EXE_PATH = catfile( $LEMON_DIR, "lemon$Config{_exe}" );
 my $PPPORT_H_PATH  = catfile( $INCLUDE,   'ppport.h' );
 
 sub new {
     my ( $class, %args ) = @_;
-    $args{c_source} = $CFC_SOURCE_DIR;
+    #$args{c_source} = $CFC_SOURCE_DIR;
     $args{include_dirs} ||= [];
     my @aux_include = (
         $INCLUDE,
@@ -74,25 +70,9 @@ sub new {
         charmonizer_params   => {
             charmonizer_c => $CHARMONIZER_C,
         },
+        extra_compiler_flags => ['-DCFCPERL'],
+        extra_linker_flags => ['-L.', '-lcfc'],
     );
-}
-
-sub _run_make {
-    my ( $self, %params ) = @_;
-    my @command           = @{ $params{args} };
-    my $dir               = $params{dir};
-    my $current_directory = getcwd();
-    chdir $dir if $dir;
-    unshift @command, 'CC=' . $self->config('cc');
-    if ( $self->config('cc') =~ /^cl\b/ ) {
-        unshift @command, "-f", "Makefile.MSVC";
-    }
-    elsif ( $^O =~ /mswin/i ) {
-        unshift @command, "-f", "Makefile.MinGW";
-    }
-    unshift @command, "$Config{make}";
-    system(@command) and confess("$Config{make} failed");
-    chdir $current_directory if $dir;
 }
 
 # Write ppport.h, which supplies some XS routines not found in older Perls and
@@ -111,58 +91,22 @@ sub ACTION_ppport {
     }
 }
 
-# Build the Lemon parser generator.
-sub ACTION_lemon {
+sub ACTION_charmony {
     my $self = shift;
-    print "Building the Lemon parser generator...\n\n";
-    $self->_run_make(
-        dir  => $LEMON_DIR,
-        args => [],
-    );
+    $self->depends_on('ppport');
+    $self->SUPER::ACTION_charmony;
 }
 
-# Run all .y files through lemon.
-sub ACTION_parsers {
+sub ACTION_static_lib {
     my $self = shift;
-    $self->depends_on('lemon');
-    my $y_files = $self->rscan_dir( $CFC_SOURCE_DIR, qr/\.y$/ );
-    for my $y_file (@$y_files) {
-        my $c_file = $y_file;
-        my $h_file = $y_file;
-        $c_file =~ s/\.y$/.c/ or die "no match";
-        $h_file =~ s/\.y$/.h/ or die "no match";
-        next if $self->up_to_date( $y_file, $c_file );
-        $self->add_to_cleanup( $c_file, $h_file );
-        my $lemon_report_file = $y_file;
-        $lemon_report_file =~ s/\.y$/.out/ or die "no match";
-        $self->add_to_cleanup($lemon_report_file);
-        system( $LEMON_EXE_PATH, '-c', $y_file ) and die "lemon failed";
-    }
-}
-
-# Run all .l files through flex.
-sub ACTION_lexers {
-    my $self = shift;
-    my $l_files = $self->rscan_dir( $CFC_SOURCE_DIR, qr/\.l$/ );
-    # Rerun flex if lemon file changes.
-    my $y_files = $self->rscan_dir( $CFC_SOURCE_DIR, qr/\.y$/ );
-    for my $l_file (@$l_files) {
-        my $c_file = $l_file;
-        my $h_file = $l_file;
-        $c_file =~ s/\.l$/.c/ or die "no match";
-        $h_file =~ s/\.l$/.h/ or die "no match";
-        next
-            if $self->up_to_date( [ $l_file, @$y_files ],
-            [ $c_file, $h_file ] );
-        system( 'flex', '--nounistd', '-o', $c_file, "--header-file=$h_file", $l_file )
-            and die "flex failed";
-    }
+    $self->depends_on(qw( charmony ));
+    system("make", '-j', "static") and die "Can't make static lib for CFC";
 }
 
 sub ACTION_code {
     my $self = shift;
 
-    $self->depends_on(qw( charmony ppport parsers ));
+    $self->depends_on(qw( static_lib ));
 
     my @flags = $self->split_like_shell($self->charmony("EXTRA_CFLAGS"));
     # The flag for the MSVC6 hack contains spaces. Make sure it stays quoted.
@@ -171,6 +115,14 @@ sub ACTION_code {
     $self->extra_compiler_flags( '-DCFCPERL', @flags );
 
     $self->SUPER::ACTION_code;
+}
+
+sub ACTION_realclean {
+    my $self = shift;
+    if (-e 'Makefile') {
+        system("make", "distclean");
+    }
+    $self->SUPER::ACTION_realclean;
 }
 
 sub _valgrind_base_command {
