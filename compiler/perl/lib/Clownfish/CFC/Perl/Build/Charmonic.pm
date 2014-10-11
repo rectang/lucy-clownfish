@@ -26,7 +26,7 @@ $VERSION = eval $VERSION;
 use Carp;
 use Config;
 use Cwd qw( getcwd );
-use File::Spec::Functions qw( catfile curdir );
+use File::Spec::Functions qw( catfile catdir curdir );
 
 # Add a custom Module::Build hashref property to pass the following build
 # parameters.
@@ -81,11 +81,15 @@ sub ACTION_charmony {
         "--cc=$cc",
         '--enable-c',
         '--enable-perl',
+        '--enable-makefile',
     );
     if ( !$self->config('usethreads') ) {
         push @command, '--disable-threads';
     }
     push @command, ( '--', @cc_args, $self->config('ccflags') );
+    push @command, @{ $self->extra_compiler_flags };
+    my $core_inc = '-I' . catdir( $self->config('archlibexp'), "CORE" );
+    push @command, $core_inc;
     if ( $ENV{CHARM_VALGRIND} ) {
         unshift @command, "valgrind", "--leak-check=yes";
     }
