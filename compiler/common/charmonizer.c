@@ -7698,8 +7698,11 @@ chaz_VariadicMacros_run(void) {
 
 typedef struct SourceFileContext {
     chaz_MakeVar *common_objs;
-    chaz_MakeVar *test_cfc_objs;
+    chaz_MakeVar *common_test_objs;
 } SourceFileContext;
+
+static const char cfc_version[]       = "0.4.0";
+static const char cfc_major_version[] = "0.4";
 
 static void
 S_add_compiler_flags(struct chaz_CLI *cli) {
@@ -7755,7 +7758,7 @@ S_source_file_callback(const char *dir, char *file, void *context) {
 
     obj_file = chaz_Util_join("", dir, dir_sep, file, obj_ext, NULL);
     if (strlen(file) >= 7 && memcmp(file, "CFCTest", 7) == 0) {
-        chaz_MakeVar_append(sfc->test_cfc_objs, obj_file);
+        chaz_MakeVar_append(sfc->common_test_objs, obj_file);
     }
     else {
         chaz_MakeVar_append(sfc->common_objs, obj_file);
@@ -7794,6 +7797,9 @@ S_write_makefile(struct chaz_CLI *cli) {
     chaz_CFlags *makefile_cflags;
     chaz_CFlags *link_flags;
 
+    chaz_Lib       *static_lib;
+    char           *static_lib_filename;
+
     printf("Creating Makefile...\n");
 
     makefile = chaz_MakeFile_new();
@@ -7826,8 +7832,8 @@ S_write_makefile(struct chaz_CLI *cli) {
 
     /* Object files */
 
-    sfc.common_objs   = chaz_MakeFile_add_var(makefile, "COMMON_OBJS", NULL);
-    sfc.test_cfc_objs = chaz_MakeFile_add_var(makefile, "TEST_CFC_OBJS", NULL);
+    sfc.common_objs      = chaz_MakeFile_add_var(makefile, "COMMON_OBJS", NULL);
+    sfc.common_test_objs = chaz_MakeFile_add_var(makefile, "COMMON_TEST_OBJS", NULL);
 
     chaz_Make_list_files(src_dir, "c", S_source_file_callback, &sfc);
 
@@ -7836,7 +7842,7 @@ S_write_makefile(struct chaz_CLI *cli) {
     free(scratch);
 
     scratch = chaz_Util_join("", "t", dir_sep, "test_cfc", obj_ext, NULL);
-    chaz_MakeVar_append(sfc.test_cfc_objs, scratch);
+    chaz_MakeFile_add_var(makefile, "TEST_CFC_OBJS", scratch);
     free(scratch);
 
     scratch = chaz_Util_join("", "cfc", obj_ext, NULL);
@@ -7846,6 +7852,13 @@ S_write_makefile(struct chaz_CLI *cli) {
     /* Rules */
 
     chaz_MakeFile_add_rule(makefile, "all", cfc_exe);
+
+    static_lib = chaz_Lib_new("cfc", chaz_Lib_STATIC, cfc_version,
+                              cfc_major_version);
+    static_lib_filename = chaz_Lib_filename(static_lib);
+    chaz_MakeFile_add_rule(makefile, "static", static_lib_filename);
+    chaz_MakeFile_add_static_lib(makefile, static_lib,
+                                 "$(COMMON_OBJS) $(COMMON_TEST_OBJS)");
 
     chaz_MakeFile_add_lemon_exe(makefile, lemon_dir);
     chaz_MakeFile_add_lemon_grammar(makefile, parse_header);
@@ -7868,7 +7881,8 @@ S_write_makefile(struct chaz_CLI *cli) {
     chaz_MakeFile_add_exe(makefile, cfc_exe, "$(COMMON_OBJS) $(CFC_OBJS)",
                           link_flags);
     chaz_MakeFile_add_exe(makefile, test_cfc_exe,
-                          "$(COMMON_OBJS) $(TEST_CFC_OBJS)", link_flags);
+                          "$(COMMON_OBJS) $(COMMON_TEST_OBJS) $(TEST_CFC_OBJS)",
+                          link_flags);
     chaz_CFlags_destroy(link_flags);
 
     rule = chaz_MakeFile_add_rule(makefile, "test", test_cfc_exe);
@@ -7899,6 +7913,7 @@ S_write_makefile(struct chaz_CLI *cli) {
 
     chaz_MakeRule_add_rm_command(clean_rule, "$(COMMON_OBJS)");
     chaz_MakeRule_add_rm_command(clean_rule, "$(CFC_OBJS)");
+    chaz_MakeRule_add_rm_command(clean_rule, "$(COMMON_TEST_OBJS)");
     chaz_MakeRule_add_rm_command(clean_rule, "$(TEST_CFC_OBJS)");
 
     if (chaz_CLI_defined(cli, "enable-coverage")) {
@@ -7913,6 +7928,8 @@ S_write_makefile(struct chaz_CLI *cli) {
     chaz_MakeFile_write(makefile);
 
     chaz_MakeFile_destroy(makefile);
+    chaz_Lib_destroy(static_lib);
+    free(static_lib_filename);
     free(lemon_dir);
     free(src_dir);
     free(include_dir);
@@ -7926,6 +7943,8 @@ int main(int argc, const char **argv) {
     chaz_CLI *cli
         = chaz_CLI_new(argv[0], "charmonizer: Probe C build environment");
     chaz_CLI_set_usage(cli, "Usage: charmonizer [OPTIONS] [-- [CFLAGS]]");
+    chaz_CLI_register(cli, "enable-static", "build static library",
+                      CHAZ_CLI_NO_ARG);
     {
         int result = chaz_Probe_parse_cli_args(argc, argv, cli);
         if (!result) {
