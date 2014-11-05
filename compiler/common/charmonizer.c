@@ -7700,8 +7700,11 @@ chaz_VariadicMacros_run(void) {
 
 typedef struct SourceFileContext {
     chaz_MakeVar *common_objs;
-    chaz_MakeVar *test_cfc_objs;
+    chaz_MakeVar *common_test_objs;
 } SourceFileContext;
+
+static const char cfc_version[]       = "0.4.0";
+static const char cfc_major_version[] = "0.4";
 
 static void
 S_add_compiler_flags(struct chaz_CLI *cli) {
@@ -7739,6 +7742,32 @@ S_add_compiler_flags(struct chaz_CLI *cli) {
 }
 
 static void
+S_configure_compiler_vars(chaz_CLI *cli, chaz_MakeFile *makefile,
+                          const char *include_dir, const char *src_dir) {
+    chaz_CFlags *makefile_cflags = chaz_CC_new_cflags();
+    chaz_CFlags *extra_cflags = chaz_CC_get_extra_cflags();
+    chaz_MakeVar *var;
+
+    chaz_MakeFile_add_var(makefile, "CC", chaz_CC_get_cc());
+
+    chaz_CFlags_enable_optimization(makefile_cflags);
+    chaz_CFlags_enable_debugging(makefile_cflags);
+    chaz_CFlags_add_include_dir(makefile_cflags, ".");
+    chaz_CFlags_add_include_dir(makefile_cflags, include_dir);
+    chaz_CFlags_add_include_dir(makefile_cflags, src_dir);
+    if (chaz_CLI_defined(cli, "enable-coverage")) {
+        chaz_CFlags_enable_code_coverage(makefile_cflags);
+    }
+
+    var = chaz_MakeFile_add_var(makefile, "CFLAGS", NULL);
+    chaz_MakeVar_append(var, chaz_CFlags_get_string(extra_cflags));
+    chaz_MakeVar_append(var, chaz_CFlags_get_string(makefile_cflags));
+    chaz_MakeVar_append(var, chaz_CC_get_cflags());
+
+    chaz_CFlags_destroy(makefile_cflags);
+}
+
+static void
 S_source_file_callback(const char *dir, char *file, void *context) {
     SourceFileContext *sfc = (SourceFileContext*)context;
     const char *dir_sep = chaz_OS_dir_sep();
@@ -7757,7 +7786,7 @@ S_source_file_callback(const char *dir, char *file, void *context) {
 
     obj_file = chaz_Util_join("", dir, dir_sep, file, obj_ext, NULL);
     if (strlen(file) >= 7 && memcmp(file, "CFCTest", 7) == 0) {
-        chaz_MakeVar_append(sfc->test_cfc_objs, obj_file);
+        chaz_MakeVar_append(sfc->common_test_objs, obj_file);
     }
     else {
         chaz_MakeVar_append(sfc->common_objs, obj_file);
@@ -7767,141 +7796,67 @@ S_source_file_callback(const char *dir, char *file, void *context) {
 }
 
 static void
-S_write_makefile(struct chaz_CLI *cli) {
+S_define_object_file_vars(chaz_CLI *cli, chaz_MakeFile *makefile,
+                          const char *src_dir, const char *parse_header,
+                          int host_is_c) {
     SourceFileContext sfc;
+    const char *obj_ext = chaz_CC_obj_ext();
+    const char *dir_sep = chaz_OS_dir_sep();
+    char *parse_header_obj = chaz_Util_join("", parse_header, obj_ext, NULL);
 
-    const char *base_dir = "..";
-    const char *dir_sep  = chaz_OS_dir_sep();
-    const char *exe_ext  = chaz_OS_exe_ext();
-    const char *obj_ext  = chaz_CC_obj_ext();
-
-    char *lemon_dir    = chaz_Util_join(dir_sep, base_dir, "..", "lemon",
-                                        NULL);
-    char *src_dir      = chaz_Util_join(dir_sep, base_dir, "src", NULL);
-    char *include_dir  = chaz_Util_join(dir_sep, base_dir, "include", NULL);
-    char *parse_header = chaz_Util_join(dir_sep, src_dir, "CFCParseHeader",
-                                        NULL);
-    char *cfc_exe      = chaz_Util_join("", "cfc", exe_ext, NULL);
-    char *test_cfc_exe = chaz_Util_join("", "t", dir_sep, "test_cfc", exe_ext,
-                                        NULL);
-
-    char *scratch;
-
-    chaz_MakeFile *makefile;
-    chaz_MakeVar  *var;
-    chaz_MakeRule *rule;
-    chaz_MakeRule *clean_rule;
-
-    chaz_CFlags *extra_cflags = chaz_CC_get_extra_cflags();
-    chaz_CFlags *makefile_cflags;
-    chaz_CFlags *link_flags;
-
-    printf("Creating Makefile...\n");
-
-    makefile = chaz_MakeFile_new();
-
-    /* Directories */
-
-    chaz_MakeFile_add_var(makefile, "BASE_DIR", base_dir);
-
-    /* C compiler */
-
-    chaz_MakeFile_add_var(makefile, "CC", chaz_CC_get_cc());
-
-    makefile_cflags = chaz_CC_new_cflags();
-
-    chaz_CFlags_enable_optimization(makefile_cflags);
-    chaz_CFlags_enable_debugging(makefile_cflags);
-    chaz_CFlags_add_include_dir(makefile_cflags, ".");
-    chaz_CFlags_add_include_dir(makefile_cflags, include_dir);
-    chaz_CFlags_add_include_dir(makefile_cflags, src_dir);
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        chaz_CFlags_enable_code_coverage(makefile_cflags);
-    }
-
-    var = chaz_MakeFile_add_var(makefile, "CFLAGS", NULL);
-    chaz_MakeVar_append(var, chaz_CFlags_get_string(extra_cflags));
-    chaz_MakeVar_append(var, chaz_CFlags_get_string(makefile_cflags));
-    chaz_MakeVar_append(var, chaz_CC_get_cflags());
-
-    chaz_CFlags_destroy(makefile_cflags);
-
-    /* Object files */
-
-    sfc.common_objs   = chaz_MakeFile_add_var(makefile, "COMMON_OBJS", NULL);
-    sfc.test_cfc_objs = chaz_MakeFile_add_var(makefile, "TEST_CFC_OBJS", NULL);
-
+    sfc.common_objs      = chaz_MakeFile_add_var(makefile, "COMMON_OBJS", NULL);
+    sfc.common_test_objs = chaz_MakeFile_add_var(makefile, "COMMON_TEST_OBJS", NULL);
     chaz_Make_list_files(src_dir, "c", S_source_file_callback, &sfc);
+    chaz_MakeVar_append(sfc.common_objs, parse_header_obj);
 
-    scratch = chaz_Util_join("", parse_header, obj_ext, NULL);
-    chaz_MakeVar_append(sfc.common_objs, scratch);
-    free(scratch);
-
-    scratch = chaz_Util_join("", "t", dir_sep, "test_cfc", obj_ext, NULL);
-    chaz_MakeVar_append(sfc.test_cfc_objs, scratch);
-    free(scratch);
-
-    scratch = chaz_Util_join("", "cfc", obj_ext, NULL);
-    chaz_MakeFile_add_var(makefile, "CFC_OBJS", scratch);
-    free(scratch);
-
-    /* Rules */
-
-    chaz_MakeFile_add_rule(makefile, "all", cfc_exe);
-
-    chaz_MakeFile_add_lemon_exe(makefile, lemon_dir);
-    chaz_MakeFile_add_lemon_grammar(makefile, parse_header);
-
-    /*
-     * The dependency is actually on CFCParseHeader.h, but make doesn't cope
-     * well with multiple output files.
-     */
-    scratch = chaz_Util_join(".", parse_header, "c", NULL);
-    chaz_MakeFile_add_rule(makefile, "$(COMMON_OBJS)", scratch);
-    free(scratch);
-
-    link_flags = chaz_CC_new_cflags();
-    if (chaz_CC_msvc_version_num()) {
-        chaz_CFlags_append(link_flags, "/nologo");
+    if (host_is_c) {
+        char *test_cfc_obj
+            = chaz_Util_join("", "t", dir_sep, "test_cfc", obj_ext, NULL);
+        char *cfc_obj
+            = chaz_Util_join("", "cfc", obj_ext, NULL);
+        chaz_MakeFile_add_var(makefile, "TEST_CFC_OBJS", test_cfc_obj);
+        chaz_MakeFile_add_var(makefile, "CFC_OBJS", cfc_obj);
+        free(test_cfc_obj);
+        free(cfc_obj);
     }
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        chaz_CFlags_enable_code_coverage(link_flags);
-    }
-    chaz_MakeFile_add_exe(makefile, cfc_exe, "$(COMMON_OBJS) $(CFC_OBJS)",
-                          link_flags);
-    chaz_MakeFile_add_exe(makefile, test_cfc_exe,
-                          "$(COMMON_OBJS) $(TEST_CFC_OBJS)", link_flags);
-    chaz_CFlags_destroy(link_flags);
 
-    rule = chaz_MakeFile_add_rule(makefile, "test", test_cfc_exe);
+    free(parse_header_obj);
+}
+
+static void
+S_add_coverage_rule(chaz_MakeFile *makefile, const char *test_cfc_exe) {
+    chaz_MakeRule *rule
+        = chaz_MakeFile_add_rule(makefile, "coverage", test_cfc_exe);
+
+    chaz_MakeRule_add_command(rule,
+                              "lcov"
+                              " --zerocounters"
+                              " --directory $(BASE_DIR)");
     chaz_MakeRule_add_command(rule, test_cfc_exe);
+    chaz_MakeRule_add_command(rule,
+                              "lcov"
+                              " --capture"
+                              " --directory $(BASE_DIR)"
+                              " --base-directory ."
+                              " --rc lcov_branch_coverage=1"
+                              " --output-file cfc.info");
+    chaz_MakeRule_add_command(rule,
+                              "genhtml"
+                              " --branch-coverage"
+                              " --output-directory coverage"
+                              " cfc.info");
+}
 
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        rule = chaz_MakeFile_add_rule(makefile, "coverage", test_cfc_exe);
-        chaz_MakeRule_add_command(rule,
-                                  "lcov"
-                                  " --zerocounters"
-                                  " --directory $(BASE_DIR)");
-        chaz_MakeRule_add_command(rule, test_cfc_exe);
-        chaz_MakeRule_add_command(rule,
-                                  "lcov"
-                                  " --capture"
-                                  " --directory $(BASE_DIR)"
-                                  " --base-directory ."
-                                  " --rc lcov_branch_coverage=1"
-                                  " --output-file cfc.info");
-        chaz_MakeRule_add_command(rule,
-                                  "genhtml"
-                                  " --branch-coverage"
-                                  " --output-directory coverage"
-                                  " cfc.info");
-    }
-
-    clean_rule = chaz_MakeFile_clean_rule(makefile);
+static void
+S_add_clean_rule(chaz_CLI *cli, chaz_MakeFile *makefile, int host_is_c) {
+    chaz_MakeRule *clean_rule = chaz_MakeFile_clean_rule(makefile);
 
     chaz_MakeRule_add_rm_command(clean_rule, "$(COMMON_OBJS)");
-    chaz_MakeRule_add_rm_command(clean_rule, "$(CFC_OBJS)");
-    chaz_MakeRule_add_rm_command(clean_rule, "$(TEST_CFC_OBJS)");
+    chaz_MakeRule_add_rm_command(clean_rule, "$(COMMON_TEST_OBJS)");
+    if (host_is_c) {
+        chaz_MakeRule_add_rm_command(clean_rule, "$(CFC_OBJS)");
+        chaz_MakeRule_add_rm_command(clean_rule, "$(TEST_CFC_OBJS)");
+    }
 
     if (chaz_CLI_defined(cli, "enable-coverage")) {
         chaz_MakeRule_add_rm_command(clean_rule, "cfc.info");
@@ -7911,14 +7866,86 @@ S_write_makefile(struct chaz_CLI *cli) {
     if (chaz_Probe_msvc_version_num()) {
         chaz_MakeRule_add_rm_command(clean_rule, "lemon.obj");
     }
+}
 
+static void
+S_write_makefile(chaz_CLI *cli, int host_is_c) {
+    const char *base_dir = "..";
+    const char *dir_sep  = chaz_OS_dir_sep();
+    const char *exe_ext  = chaz_OS_exe_ext();
+    const char *obj_ext  = chaz_CC_obj_ext();
+    char *lemon_dir    = chaz_Util_join(dir_sep, base_dir, "..", "lemon",
+                                        NULL);
+    char *src_dir      = chaz_Util_join(dir_sep, base_dir, "src", NULL);
+    char *include_dir  = chaz_Util_join(dir_sep, base_dir, "include", NULL);
+    char *parse_header = chaz_Util_join(dir_sep, src_dir, "CFCParseHeader",
+                                        NULL);
+    char *parse_header_c = chaz_Util_join(".", parse_header, "c", NULL);
+    char *cfc_exe        = chaz_Util_join("", "cfc", exe_ext, NULL);
+    char *test_cfc_exe   = chaz_Util_join("", "t", dir_sep, "test_cfc", exe_ext,
+                                          NULL);
+    chaz_MakeFile *makefile = chaz_MakeFile_new();
+
+    printf("Creating Makefile...\n");
+
+    /* Define Makefile vars: directories, C compiler config, object files. */
+    chaz_MakeFile_add_var(makefile, "BASE_DIR", base_dir);
+    S_configure_compiler_vars(cli, makefile, include_dir, src_dir);
+    S_define_object_file_vars(cli, makefile, src_dir, parse_header, host_is_c);
+
+    /* Define Makefile rules. */
+    if (host_is_c) {
+        chaz_CFlags *link_flags = chaz_CC_new_cflags();
+        chaz_MakeRule *rule;
+
+        chaz_MakeFile_add_rule(makefile, "all", cfc_exe);
+        if (chaz_CC_msvc_version_num()) {
+            chaz_CFlags_append(link_flags, "/nologo");
+        }
+        if (chaz_CLI_defined(cli, "enable-coverage")) {
+            chaz_CFlags_enable_code_coverage(link_flags);
+        }
+        chaz_MakeFile_add_exe(makefile, cfc_exe, "$(COMMON_OBJS) $(CFC_OBJS)",
+                              link_flags);
+        chaz_MakeFile_add_exe(makefile, test_cfc_exe,
+                              "$(COMMON_OBJS) $(COMMON_TEST_OBJS) $(TEST_CFC_OBJS)",
+                              link_flags);
+        rule = chaz_MakeFile_add_rule(makefile, "test", test_cfc_exe);
+        chaz_MakeRule_add_command(rule, test_cfc_exe);
+        if (chaz_CLI_defined(cli, "enable-coverage")) {
+            S_add_coverage_rule(makefile, test_cfc_exe);
+        }
+
+        chaz_CFlags_destroy(link_flags);
+    }
+    else {
+        chaz_Lib *static_lib = chaz_Lib_new("cfc", chaz_Lib_STATIC,
+                                            cfc_version, cfc_major_version);
+        char *static_lib_filename = chaz_Lib_filename(static_lib);
+        chaz_MakeFile_add_rule(makefile, "all", "static");
+        chaz_MakeFile_add_rule(makefile, "static", static_lib_filename);
+        chaz_MakeFile_add_static_lib(makefile, static_lib,
+                                     "$(COMMON_OBJS) $(COMMON_TEST_OBJS)");
+        chaz_Lib_destroy(static_lib);
+        free(static_lib_filename);
+    }
+    chaz_MakeFile_add_lemon_exe(makefile, lemon_dir);
+    chaz_MakeFile_add_lemon_grammar(makefile, parse_header);
+    /* The dependency is actually on CFCParseHeader.h, but make doesn't
+     * cope well with multiple output files. */
+    chaz_MakeFile_add_rule(makefile, "$(COMMON_OBJS)", parse_header_c);
+    S_add_clean_rule(cli, makefile, host_is_c);
+
+    /* Write out Makefile. */
     chaz_MakeFile_write(makefile);
 
+    /* Clean up. */
     chaz_MakeFile_destroy(makefile);
     free(lemon_dir);
     free(src_dir);
     free(include_dir);
     free(parse_header);
+    free(parse_header_c);
     free(cfc_exe);
     free(test_cfc_exe);
 }
@@ -7928,6 +7955,8 @@ int main(int argc, const char **argv) {
     chaz_CLI *cli
         = chaz_CLI_new(argv[0], "charmonizer: Probe C build environment");
     chaz_CLI_set_usage(cli, "Usage: charmonizer [OPTIONS] [-- [CFLAGS]]");
+    chaz_CLI_register(cli, "host", "specify host binding language",
+                      CHAZ_CLI_ARG_REQUIRED);
     {
         int result = chaz_Probe_parse_cli_args(argc, argv, cli);
         if (!result) {
@@ -7935,6 +7964,9 @@ int main(int argc, const char **argv) {
         }
         chaz_Probe_init(cli);
         S_add_compiler_flags(cli);
+    }
+    if (!chaz_CLI_defined(cli, "host")) {
+        chaz_CLI_set(cli, "host", "c");
     }
 
     /* Define stdint types in charmony.h. */
@@ -7956,7 +7988,8 @@ int main(int argc, const char **argv) {
     chaz_VariadicMacros_run();
 
     if (chaz_CLI_defined(cli, "enable-makefile")) {
-        S_write_makefile(cli);
+        int host_is_c = strcmp(chaz_CLI_strval(cli, "host"), "c") == 0;
+        S_write_makefile(cli, host_is_c);
     }
 
     /* Clean up. */
