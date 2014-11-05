@@ -91,6 +91,34 @@ S_add_compiler_flags(struct chaz_CLI *cli) {
     }
 }
 
+static void
+S_configure_compiler_vars(chaz_CLI *cli, chaz_MakeFile *makefile,
+                          const char *autogen_inc_dir) {
+    chaz_CFlags *makefile_cflags = chaz_CC_new_cflags();
+    chaz_CFlags *extra_cflags = chaz_CC_get_extra_cflags();
+    chaz_MakeVar *var;
+
+    chaz_MakeFile_add_var(makefile, "CC", chaz_CC_get_cc());
+
+    chaz_CFlags_enable_optimization(makefile_cflags);
+    chaz_CFlags_enable_debugging(makefile_cflags);
+    chaz_CFlags_disable_strict_aliasing(makefile_cflags);
+    chaz_CFlags_compile_shared_library(makefile_cflags);
+    if (chaz_CLI_defined(cli, "enable-coverage")) {
+        chaz_CFlags_enable_code_coverage(makefile_cflags);
+    }
+
+    chaz_CFlags_add_include_dir(makefile_cflags, ".");
+    chaz_CFlags_add_include_dir(makefile_cflags, autogen_inc_dir);
+
+    var = chaz_MakeFile_add_var(makefile, "CFLAGS", NULL);
+    chaz_MakeVar_append(var, chaz_CFlags_get_string(extra_cflags));
+    chaz_MakeVar_append(var, chaz_CFlags_get_string(makefile_cflags));
+    chaz_MakeVar_append(var, chaz_CC_get_cflags());
+
+    chaz_CFlags_destroy(makefile_cflags);
+}
+
 static int
 S_ends_with(const char *string, const char *postfix) {
     size_t len         = strlen(string);
@@ -136,189 +164,69 @@ S_cfh_file_callback(const char *dir, char *file, void *context) {
 }
 
 static void
-S_write_makefile(struct chaz_CLI *cli) {
+S_define_file_list_vars(chaz_CLI *cli, chaz_MakeFile *makefile,
+                        const char *core_dir, int host_is_c) {
     SourceFileContext sfc;
+    const char *obj_ext = chaz_CC_obj_ext();
+    const char *dir_sep = chaz_OS_dir_sep();
+    char *cfish_parcel_o
+        = chaz_Util_join("", "autogen", dir_sep, "source", dir_sep,
+                         "cfish_parcel", obj_ext, NULL);
+    char *testcfish_parcel_o
+        = chaz_Util_join("", "autogen", dir_sep, "source", dir_sep,
+                         "testcfish_parcel", obj_ext, NULL);
 
-    const char *base_dir = "..";
-    const char *dir_sep  = chaz_OS_dir_sep();
-    const char *exe_ext  = chaz_OS_exe_ext();
-    const char *obj_ext  = chaz_CC_obj_ext();
-
-    char *core_dir  = chaz_Util_join(dir_sep, base_dir, "core", NULL);
-    char *cfc_dir   = chaz_Util_join(dir_sep, base_dir, "..", "compiler", "c",
-                                     NULL);
-    char *cfc_exe   = chaz_Util_join("", cfc_dir, dir_sep, "cfc", exe_ext,
-                                     NULL);
-    char *test_cfish_exe  = chaz_Util_join("", "t", dir_sep, "test_cfish",
-                                           exe_ext, NULL);
-    char *autogen_inc_dir = chaz_Util_join(dir_sep, "autogen", "include",
-                                           NULL);
-    char *autogen_target  = chaz_Util_join(dir_sep, "autogen",
-                                           "hierarchy.json", NULL);
-
-    chaz_MakeFile *makefile;
-    chaz_MakeVar  *var;
-    chaz_MakeRule *rule;
-    chaz_MakeRule *clean_rule;
-    chaz_MakeRule *distclean_rule;
-
-    chaz_CFlags *extra_cflags = chaz_CC_get_extra_cflags();
-    chaz_CFlags *makefile_cflags;
-    chaz_CFlags *link_flags;
-    chaz_CFlags *test_cflags;
-
-    chaz_Lib       *shared_lib;
-    chaz_Lib       *static_lib;
-    const char     *math_library = chaz_Floats_math_library();
-    char           *shared_lib_filename;
-    char           *static_lib_filename;
-    char           *test_command;
-    char           *scratch;
-
-    printf("Creating Makefile...\n");
-
-    makefile = chaz_MakeFile_new();
-
-    /* Directories */
-
-    chaz_MakeFile_add_var(makefile, "BASE_DIR", base_dir);
-
-    /* C compiler */
-
-    chaz_MakeFile_add_var(makefile, "CC", chaz_CC_get_cc());
-
-    makefile_cflags = chaz_CC_new_cflags();
-
-    chaz_CFlags_enable_optimization(makefile_cflags);
-    chaz_CFlags_enable_debugging(makefile_cflags);
-    chaz_CFlags_disable_strict_aliasing(makefile_cflags);
-    chaz_CFlags_compile_shared_library(makefile_cflags);
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        chaz_CFlags_enable_code_coverage(makefile_cflags);
+    /* Object files. */
+    sfc.var = chaz_MakeFile_add_var(makefile, "CLOWNFISH_OBJS", NULL);
+    if (host_is_c) {
+        chaz_Make_list_files("src", "c", S_c_file_callback, &sfc);
     }
+    if (chaz_CLI_defined(cli, "host-src")) {
+        chaz_Make_list_files(chaz_CLI_strval(cli, "host-src"), "c",
+                             S_c_file_callback, &sfc);
+    }
+    chaz_Make_list_files(core_dir, "c", S_c_file_callback, &sfc);
+    chaz_MakeVar_append(sfc.var, cfish_parcel_o);
+    chaz_MakeVar_append(sfc.var, testcfish_parcel_o);
 
-    chaz_CFlags_add_include_dir(makefile_cflags, ".");
-    chaz_CFlags_add_include_dir(makefile_cflags, autogen_inc_dir);
-
-    var = chaz_MakeFile_add_var(makefile, "CFLAGS", NULL);
-    chaz_MakeVar_append(var, chaz_CFlags_get_string(extra_cflags));
-    chaz_MakeVar_append(var, chaz_CFlags_get_string(makefile_cflags));
-    chaz_MakeVar_append(var, chaz_CC_get_cflags());
-
-    chaz_CFlags_destroy(makefile_cflags);
-
-    /* Object files */
-
-    var = chaz_MakeFile_add_var(makefile, "CLOWNFISH_OBJS", NULL);
-    sfc.var = var;
-
-    chaz_Make_list_files("src",        "c", S_c_file_callback, &sfc);
-    chaz_Make_list_files(core_dir,     "c", S_c_file_callback, &sfc);
-
-    scratch = chaz_Util_join("", "autogen", dir_sep, "source", dir_sep,
-                             "cfish_parcel", obj_ext, NULL);
-    chaz_MakeVar_append(var, scratch);
-    free(scratch);
-    scratch = chaz_Util_join("", "autogen", dir_sep, "source", dir_sep,
-                             "testcfish_parcel", obj_ext, NULL);
-    chaz_MakeVar_append(var, scratch);
-    free(scratch);
-
-    /* Clownfish header files */
-
-    var = chaz_MakeFile_add_var(makefile, "CLOWNFISH_HEADERS", NULL);
-    sfc.var = var;
-
+    /* Clownfish header files. */
+    sfc.var = chaz_MakeFile_add_var(makefile, "CLOWNFISH_HEADERS", NULL);
     chaz_Make_list_files(core_dir, "cfh", S_cfh_file_callback, &sfc);
 
-    /* Rules */
+    free(testcfish_parcel_o);
+    free(cfish_parcel_o);
+}
 
-    shared_lib = chaz_Lib_new("cfish", chaz_Lib_SHARED, cfish_version,
-                              cfish_major_version);
-    shared_lib_filename = chaz_Lib_filename(shared_lib);
-    static_lib = chaz_Lib_new("cfish", chaz_Lib_STATIC, cfish_version,
-                              cfish_major_version);
-    static_lib_filename = chaz_Lib_filename(static_lib);
-    scratch = chaz_Util_join(" ", shared_lib_filename, static_lib_filename,
-                             NULL);
-    chaz_MakeFile_add_rule(makefile, "all", scratch);
-    free(scratch);
+static void
+S_add_coverage_rule(chaz_MakeFile *makefile, const char *test_cfish_exe,
+                    const char *test_command) {
+    chaz_MakeRule *rule
+        = chaz_MakeFile_add_rule(makefile, "coverage", test_cfish_exe);
 
-    rule = chaz_MakeFile_add_rule(makefile, cfc_exe, NULL);
-    chaz_MakeRule_add_make_command(rule, cfc_dir, NULL);
-
-    rule = chaz_MakeFile_add_rule(makefile, autogen_target, cfc_exe);
-    chaz_MakeRule_add_prereq(rule, "$(CLOWNFISH_HEADERS)");
-    scratch = chaz_Util_join("", cfc_exe, " --source=", core_dir,
-                             " --dest=autogen --header=cfc_header", NULL);
-    chaz_MakeRule_add_command(rule, scratch);
-    free(scratch);
-
-    /* Needed for parallel builds. */
-    scratch = chaz_Util_join(dir_sep, "autogen", "source", "cfish_parcel.c",
-                             NULL);
-    rule = chaz_MakeFile_add_rule(makefile, scratch, autogen_target);
-    scratch = chaz_Util_join(dir_sep, "autogen", "source",
-                             "testcfish_parcel.c", NULL);
-    rule = chaz_MakeFile_add_rule(makefile, scratch, autogen_target);
-    free(scratch);
-
-    chaz_MakeFile_add_rule(makefile, "$(CLOWNFISH_OBJS)", autogen_target);
-
-    link_flags = chaz_CC_new_cflags();
-    chaz_CFlags_enable_debugging(link_flags);
-    if (math_library) {
-        chaz_CFlags_add_external_library(link_flags, math_library);
-    }
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        chaz_CFlags_enable_code_coverage(link_flags);
-    }
-    chaz_MakeFile_add_shared_lib(makefile, shared_lib, "$(CLOWNFISH_OBJS)",
-                                 link_flags);
-    chaz_CFlags_destroy(link_flags);
-    chaz_MakeFile_add_static_lib(makefile, static_lib, "$(CLOWNFISH_OBJS)");
-
-    test_cflags = chaz_CC_new_cflags();
-    chaz_CFlags_enable_optimization(test_cflags);
-    chaz_CFlags_add_include_dir(test_cflags, autogen_inc_dir);
-    chaz_CFlags_add_library(test_cflags, shared_lib);
-    scratch = chaz_Util_join(dir_sep, "t", "test_cfish.c", NULL);
-    rule = chaz_MakeFile_add_compiled_exe(makefile, test_cfish_exe, scratch,
-                                          test_cflags);
-    free(scratch);
-    chaz_MakeRule_add_prereq(rule, shared_lib_filename);
-    chaz_CFlags_destroy(test_cflags);
-
-    rule = chaz_MakeFile_add_rule(makefile, "test", test_cfish_exe);
-    if (strcmp(chaz_OS_shared_lib_ext(), ".so") == 0) {
-        test_command = chaz_Util_join(" ", "LD_LIBRARY_PATH=.", test_cfish_exe,
-                                      NULL);
-    }
-    else {
-        test_command = chaz_Util_strdup(test_cfish_exe);
-    }
+    chaz_MakeRule_add_command(rule,
+                              "lcov"
+                              " --zerocounters"
+                              " --directory $(BASE_DIR)");
     chaz_MakeRule_add_command(rule, test_command);
+    chaz_MakeRule_add_command(rule,
+                              "lcov"
+                              " --capture"
+                              " --directory $(BASE_DIR)"
+                              " --base-directory ."
+                              " --rc lcov_branch_coverage=1"
+                              " --output-file clownfish.info");
+    chaz_MakeRule_add_command(rule,
+                              "genhtml"
+                              " --branch-coverage"
+                              " --output-directory coverage"
+                              " clownfish.info");
+}
 
-    if (chaz_CLI_defined(cli, "enable-coverage")) {
-        rule = chaz_MakeFile_add_rule(makefile, "coverage", test_cfish_exe);
-        chaz_MakeRule_add_command(rule,
-                                  "lcov"
-                                  " --zerocounters"
-                                  " --directory $(BASE_DIR)");
-        chaz_MakeRule_add_command(rule, test_command);
-        chaz_MakeRule_add_command(rule,
-                                  "lcov"
-                                  " --capture"
-                                  " --directory $(BASE_DIR)"
-                                  " --base-directory ."
-                                  " --rc lcov_branch_coverage=1"
-                                  " --output-file clownfish.info");
-        chaz_MakeRule_add_command(rule,
-                                  "genhtml"
-                                  " --branch-coverage"
-                                  " --output-directory coverage"
-                                  " clownfish.info");
-    }
+static void
+S_add_clean_rule(chaz_CLI *cli, chaz_MakeFile *makefile, const char *cfc_dir,
+                 int host_is_c) {
+    chaz_MakeRule *clean_rule;
+    chaz_MakeRule *distclean_rule;
 
     clean_rule = chaz_MakeFile_clean_rule(makefile);
     chaz_MakeRule_add_rm_command(clean_rule, "$(CLOWNFISH_OBJS)");
@@ -329,29 +237,157 @@ S_write_makefile(struct chaz_CLI *cli) {
         chaz_MakeRule_add_recursive_rm_command(clean_rule, "coverage");
     }
 
-    if (chaz_Probe_msvc_version_num()) {
-        chaz_MakeRule_add_rm_command(clean_rule, "test_cfish.obj");
+    if (host_is_c) {
+        if (chaz_Probe_msvc_version_num()) {
+            chaz_MakeRule_add_rm_command(clean_rule, "test_cfish.obj");
+        }
+
+        chaz_MakeRule_add_make_command(clean_rule, cfc_dir, "clean");
+        distclean_rule = chaz_MakeFile_distclean_rule(makefile);
+        chaz_MakeRule_add_make_command(distclean_rule, cfc_dir, "distclean");
+    }
+}
+
+static void
+S_write_makefile(struct chaz_CLI *cli) {
+    int host_is_c = strcmp(chaz_CLI_strval(cli, "host"), "c") == 0;
+    const char *base_dir = "..";
+    const char *dir_sep  = chaz_OS_dir_sep();
+    const char *exe_ext  = chaz_OS_exe_ext();
+    char *core_dir = chaz_Util_join(dir_sep, base_dir, "core", NULL);
+    char *cfc_dir  = chaz_Util_join(dir_sep, base_dir, "..", "compiler", "c", NULL);
+    char *autogen_inc_dir = chaz_Util_join(dir_sep, "autogen", "include", NULL);
+    char *autogen_target
+        = chaz_Util_join(dir_sep, "autogen", "hierarchy.json", NULL);
+    char *cfish_parcel_c
+        = chaz_Util_join(dir_sep, "autogen", "source", "cfish_parcel.c", NULL);
+    char *testcfish_parcel_c
+        = chaz_Util_join(dir_sep, "autogen", "source", "testcfish_parcel.c", NULL);
+    chaz_MakeFile *makefile = chaz_MakeFile_new();
+
+    printf("Creating Makefile...\n");
+
+    /* Define Makefile vars: directories, C compiler config, files lists... */
+    chaz_MakeFile_add_var(makefile, "BASE_DIR", base_dir);
+    S_configure_compiler_vars(cli, makefile, autogen_inc_dir);
+    S_define_file_list_vars(cli, makefile, core_dir, host_is_c);
+
+    /* Define Makefile rules. */
+    if (host_is_c) {
+        char *cfc_exe = chaz_Util_join("", cfc_dir, dir_sep, "cfc", exe_ext,
+                                       NULL);
+        char *test_cfish_exe = chaz_Util_join("", "t", dir_sep, "test_cfish",
+                                              exe_ext, NULL);
+        chaz_Lib *shared_lib = chaz_Lib_new("cfish", chaz_Lib_SHARED,
+                                            cfish_version, cfish_major_version);
+        chaz_Lib *static_lib = chaz_Lib_new("cfish", chaz_Lib_STATIC, cfish_version,
+                                            cfish_major_version);
+        char *shared_lib_filename = chaz_Lib_filename(shared_lib);
+        char *static_lib_filename = chaz_Lib_filename(static_lib);
+        const char *math_library = chaz_Floats_math_library();
+
+        char *test_command;
+        char *scratch;
+        chaz_MakeRule *rule;
+        chaz_CFlags *link_flags;
+        chaz_CFlags *test_cflags;
+
+        scratch = chaz_Util_join(" ", shared_lib_filename, static_lib_filename,
+                                 NULL);
+        chaz_MakeFile_add_rule(makefile, "all", scratch);
+        chaz_MakeFile_add_rule(makefile, "static", static_lib_filename);
+        free(scratch);
+
+        rule = chaz_MakeFile_add_rule(makefile, cfc_exe, NULL);
+        chaz_MakeRule_add_make_command(rule, cfc_dir, NULL);
+
+        rule = chaz_MakeFile_add_rule(makefile, autogen_target, cfc_exe);
+        chaz_MakeRule_add_prereq(rule, "$(CLOWNFISH_HEADERS)");
+        scratch = chaz_Util_join("", cfc_exe, " --source=", core_dir,
+                                 " --dest=autogen --header=cfc_header", NULL);
+        chaz_MakeRule_add_command(rule, scratch);
+        free(scratch);
+
+        chaz_MakeFile_add_rule(makefile, "$(CLOWNFISH_OBJS)", autogen_target);
+
+        link_flags = chaz_CC_new_cflags();
+        chaz_CFlags_enable_debugging(link_flags);
+        if (math_library) {
+            chaz_CFlags_add_external_library(link_flags, math_library);
+        }
+        if (chaz_CLI_defined(cli, "enable-coverage")) {
+            chaz_CFlags_enable_code_coverage(link_flags);
+        }
+        chaz_MakeFile_add_shared_lib(makefile, shared_lib, "$(CLOWNFISH_OBJS)",
+                                     link_flags);
+        chaz_CFlags_destroy(link_flags);
+        chaz_MakeFile_add_static_lib(makefile, static_lib, "$(CLOWNFISH_OBJS)");
+
+        test_cflags = chaz_CC_new_cflags();
+        chaz_CFlags_enable_optimization(test_cflags);
+        chaz_CFlags_add_include_dir(test_cflags, autogen_inc_dir);
+        chaz_CFlags_add_library(test_cflags, shared_lib);
+        scratch = chaz_Util_join(dir_sep, "t", "test_cfish.c", NULL);
+        rule = chaz_MakeFile_add_compiled_exe(makefile, test_cfish_exe, scratch,
+                                              test_cflags);
+        free(scratch);
+        chaz_MakeRule_add_prereq(rule, shared_lib_filename);
+        chaz_CFlags_destroy(test_cflags);
+
+        rule = chaz_MakeFile_add_rule(makefile, "test", test_cfish_exe);
+        if (strcmp(chaz_OS_shared_lib_ext(), ".so") == 0) {
+            test_command = chaz_Util_join(" ", "LD_LIBRARY_PATH=.", test_cfish_exe,
+                                          NULL);
+        }
+        else {
+            test_command = chaz_Util_strdup(test_cfish_exe);
+        }
+        chaz_MakeRule_add_command(rule, test_command);
+
+        if (chaz_CLI_defined(cli, "enable-coverage")) {
+            S_add_coverage_rule(makefile, test_cfish_exe, test_command);
+        }
+
+        chaz_Lib_destroy(shared_lib);
+        chaz_Lib_destroy(static_lib);
+        free(shared_lib_filename);
+        free(static_lib_filename);
+        free(test_command);
+        free(cfc_exe);
+        free(test_cfish_exe);
+    }
+    else {
+        chaz_Lib *static_lib = chaz_Lib_new("cfish", chaz_Lib_STATIC, cfish_version,
+                                            cfish_major_version);
+        char *static_lib_filename = chaz_Lib_filename(static_lib);
+
+        chaz_MakeFile_add_rule(makefile, "all", "static");
+        chaz_MakeFile_add_rule(makefile, "static", static_lib_filename);
+        chaz_MakeFile_add_rule(makefile, "$(CLOWNFISH_OBJS)", autogen_target);
+        chaz_MakeFile_add_static_lib(makefile, static_lib, "$(CLOWNFISH_OBJS)");
+
+        free(static_lib_filename);
+        chaz_Lib_destroy(static_lib);
     }
 
-    chaz_MakeRule_add_make_command(clean_rule, cfc_dir, "clean");
+    /* Define rules needed for parallel builds. */
+    chaz_MakeFile_add_rule(makefile, cfish_parcel_c, autogen_target);
+    chaz_MakeFile_add_rule(makefile, testcfish_parcel_c, autogen_target);
 
-    distclean_rule = chaz_MakeFile_distclean_rule(makefile);
-    chaz_MakeRule_add_make_command(distclean_rule, cfc_dir, "distclean");
+    /* Define clean rules. */
+    S_add_clean_rule(cli, makefile, cfc_dir, host_is_c);
 
+    /* Write out Makefile. */
     chaz_MakeFile_write(makefile);
 
+    /* Clean up. */
     chaz_MakeFile_destroy(makefile);
-    chaz_Lib_destroy(shared_lib);
-    chaz_Lib_destroy(static_lib);
-    free(core_dir);
+    free(testcfish_parcel_c);
+    free(cfish_parcel_c);
     free(cfc_dir);
-    free(cfc_exe);
-    free(test_cfish_exe);
+    free(core_dir);
     free(autogen_inc_dir);
     free(autogen_target);
-    free(shared_lib_filename);
-    free(static_lib_filename);
-    free(test_command);
 }
 
 int main(int argc, const char **argv) {
@@ -360,12 +396,19 @@ int main(int argc, const char **argv) {
         = chaz_CLI_new(argv[0], "charmonizer: Probe C build environment");
     chaz_CLI_register(cli, "disable-threads", "whether to disable threads",
                       CHAZ_CLI_NO_ARG);
+    chaz_CLI_register(cli, "host", "specify host binding language",
+                      CHAZ_CLI_ARG_REQUIRED);
+    chaz_CLI_register(cli, "host-src", "dir with host-specific C source files",
+                      CHAZ_CLI_ARG_REQUIRED);
     chaz_CLI_set_usage(cli, "Usage: charmonizer [OPTIONS] [-- [CFLAGS]]");
     if (!chaz_Probe_parse_cli_args(argc, argv, cli)) {
         chaz_Probe_die_usage();
     }
     chaz_Probe_init(cli);
     S_add_compiler_flags(cli);
+    if (!chaz_CLI_defined(cli, "host")) {
+        chaz_CLI_set(cli, "host", "c");
+    }
 
     /* Employ integer features but don't define stdint types in charmony.h. */
     chaz_ConfWriter_append_conf(
