@@ -8022,8 +8022,8 @@ S_write_makefile(struct chaz_CLI *cli) {
         free(test_cfish_exe);
     }
     else {
-        chaz_Lib *static_lib = chaz_Lib_new("cfish", chaz_Lib_STATIC, cfish_version,
-                                            cfish_major_version);
+        chaz_Lib *static_lib = chaz_Lib_new("clownfish", chaz_Lib_STATIC,
+                                            cfish_version, cfish_major_version);
         char *static_lib_filename = chaz_Lib_filename(static_lib);
 
         chaz_MakeFile_add_rule(makefile, "all", "static");
