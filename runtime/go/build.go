@@ -45,7 +45,7 @@ var installedLibPath string
 func init() {
 	_, buildGO, _, _ = runtime.Caller(1)
 	buildDir = path.Dir(buildGO)
-	hostSrcDir = path.Join(buildDir, "../c/src")
+	hostSrcDir = path.Join(buildDir, "ext")
 	configGO = path.Join(buildDir, "clownfish", "config.go")
 	var err error
 	installedLibPath, err = cfc.InstalledLibPath(packageName)
