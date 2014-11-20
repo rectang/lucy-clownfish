@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-require 'rake/clean' 
-import '../../runtime/ruby/Rakefile.common'
+require 'rake/clean'
 
 def rbconfig
   RbConfig::CONFIG
@@ -24,93 +23,60 @@ def exe_path(*args)
   File.join(args).ext(RbConfig::CONFIG["EXEEXT"])
 end
 
-BASE_PATH = '..'
-COMMON_SOURCE_DIR       = File.join(BASE_PATH, "common")
-CHARMONIZER_C           = File.join(COMMON_SOURCE_DIR, 'charmonizer.c')
-CHARMONIZER_EXE_PATH    = File.absolute_path(exe_path('charmonizer'))
-CHARMONIZER_ORIG_DIR    = File.absolute_path( File.join( BASE_PATH, '..', '..', 'charmonizer' ) )
-CHARMONY_H_PATH         = 'charmony.h'
-CHARMONY_RB_PATH        = 'Charmony.rb'
-CLOWNFISH_RUBY_DIR      = File.absolute_path('.')
-CLOWNFISH_INCLUDE_DIR   = File.join(CLOWNFISH_RUBY_DIR,'..','include')
-CLOWNFISH_RUNTIME       = File.join('..','..','runtime','ruby')
-CLOWNFISH_SRC_DIR       = File.join(CLOWNFISH_RUBY_DIR,'..','src')
-LEMON_SRC_DIR           = File.join('..','..','lemon')
-RUBY_EXT_CFC            = File.join('.','ext','Clownfish')
-
-desc "Build lemon"
-task :build_lemon do
-  puts "Building lemon"
-  run_make(LEMON_SRC_DIR,[])
+def cc_command
+  rbconfig["CC"]
 end
 
-desc "Build Clownfish"
-task :clownfish => [:charmony, :parse_y_files] do
-  Dir.glob(File.join(CLOWNFISH_SRC_DIR, '**', '*.c')).each do|c_file|
-    obj_file = c_file.ext(rbconfig['OBJEXT'])
-    next if uptodate?(obj_file, [c_file])
-    command = "#{cc_command} #{includes} #{extra_ccflags} -o #{obj_file} -c #{c_file}"
-    puts command
-    if system(command).nil?
-      abort "Failed cc compile"
-    end
+def all_ccflags
+  ccflags = '-DCFCRUBY '
+
+  if defined?(rbconfig["ARCH_FLAG"])
+    ccflags += rbconfig['ARCH_FLAG'] + ' '
   end
-  Rake::Task['cfc_ext'].invoke
 
-end
-
-# Clean up compiled object files.
-obj_glob = File.join(CLOWNFISH_SRC_DIR, '**', '*.' + rbconfig['OBJEXT'])
-Dir.glob(obj_glob).each do |file|
-  CLEAN.include(file);
-end
-
-desc "Build CFC Ext"
-task :cfc_ext => [:clownfish] do
-  makefile_path = File.join('ext', 'Clownfish', 'Makefile')
-  dependencies  = Dir.glob(File.join(CLOWNFISH_SRC_DIR, '**', '*.h'))
-  dependencies << File.join(RUBY_EXT_CFC, "extconf.rb")
-  dependencies << 'Rakefile'
-  if !uptodate?(makefile_path, dependencies)
-    Dir.chdir(RUBY_EXT_CFC) do
-      ruby 'extconf.rb'
-    end
+  if defined?(rbconfig["CFLAGS"])
+    ccflags += rbconfig['CFLAGS'] + ' '
   end
-  Dir.chdir(RUBY_EXT_CFC) do
-    if system('make').nil?
-      abort "Failed to make cfc ruby extension"
-    end
+
+  if ENV.has_key?('CFLAGS')
+    ccflags += ENV['CFLAGS']
   end
+
+  if ENV.has_key?('LUCY_VALGRIND')
+    ccflags += "-fno-inline-functions "
+  end
+
+  # Compile as C++ under MSVC.  Turn off stupid warnings, too.
+  if cc_command =~ /^cl\b/
+    ccflags += '/TP -D_CRT_SECURE_NO_WARNINGS '
+  end
+
+  # Blindly include GCC-specific flags even though we don't know that the
+  # compiler is GCC.
+  if ccflags !~ /-std=/
+    ccflags += "-std=gnu99 "
+  end
+  if ccflags !~ /-D_GNU_SOURCE/
+    ccflags += "-D_GNU_SOURCE "
+  end
+
+  return ccflags
 end
 
-# Clean up Ruby extension.
-Dir.glob(File.join('ext', '**', '*.' + rbconfig['OBJEXT'])).each do |file|
-  CLEAN.include(file);
-end
-Dir.glob(File.join('ext', '**', '*.' + rbconfig['DLEXT'])).each do |file|
-  CLEAN.include(file);
-end
-CLEAN.include(File.join('ext', 'Clownfish', 'Makefile'))
-
-desc "Lemonize the y file"
-task :parse_y_files => [:build_lemon] do
-  puts "Parsing y files"
-  Dir.glob(File.join(CLOWNFISH_SRC_DIR, '**', '*.y')).each do |y_file|
-    c_file = y_file.ext('c')
-    h_file = y_file.ext('h')
-    report_file = y_file.ext('out')
-    next if uptodate?(c_file, [y_file]);
-    command = File.join(LEMON_SRC_DIR,'lemon') + ' -c ' + y_file    
-    puts command
-    if system(command).nil?
-      abort "Problem parsing y file with lemon"
-    end
-  end
-  puts "Done."
-end
+BASE_PATH            = '..'
+COMMON_SOURCE_DIR    = File.join(BASE_PATH, "common")
+CHARMONIZER_C        = File.join(COMMON_SOURCE_DIR, 'charmonizer.c')
+CHARMONIZER_EXE_PATH = File.absolute_path(exe_path('charmonizer'))
+CHARMONIZER_ORIG_DIR = File.absolute_path( File.join( BASE_PATH, '..', '..', 'charmonizer' ) )
+CHARMONY_H_PATH      = 'charmony.h'
+CHARMONY_RB_PATH     = 'Charmony.rb'
+CFC_RUBY_DIR         = File.absolute_path('.')
+CFC_INCLUDE_DIR      = File.join(CFC_RUBY_DIR,'..','include')
+RAKEFILE_PATH        = File.join(CFC_RUBY_DIR, "Rakefile")
+RUBY_EXT_CFC         = File.join('.', 'ext', 'Clownfish')
 
 desc "Build and run charmonizer, creating charmony.h and charmony.rb"
-task :charmony do
+task :configure do
   # Compile charmonizer executable.
   if !uptodate? CHARMONIZER_EXE_PATH, [CHARMONIZER_C]
     outflag = cc_command.match(/cl\b/) ? "/Fe" : "-o "
@@ -133,6 +99,8 @@ task :charmony do
     '--cc=' + cc_command,
     '--enable-c',
     '--enable-ruby',
+    '--host=ruby',
+    '--enable-makefile',
     '--',
     all_ccflags,
   ]
@@ -152,15 +120,49 @@ CLEAN.include(CHARMONY_RB_PATH)
 # Clean up after charmonizer if it doesn't succeed on its own.
 CLEAN.include("_charm*")
 
-# Clean up after Lemonized files.
-Dir.glob(File.join(CLOWNFISH_SRC_DIR, '**', '*.y')).each do |y_file|
-  CLEAN.include(y_file.ext('c'))
-  CLEAN.include(y_file.ext('h'))
-  CLEAN.include(y_file.ext('out'))
+desc "Build Clownfish"
+task :static => [:configure] do
+  command = ['make', '-j', 'static']
+  puts command.join(" ")
+  if !system(*command)
+    raise "Failed to build C static lib" + $?.to_s
+  end
+  #Rake::Task['cfc_ext'].invoke
 end
 
-task :default => [:clownfish]
+desc "Build CFC Extension"
+task :cfc_ext => [:static] do
+  makefile_path = File.join('ext', 'Clownfish', 'Makefile')
+  Dir.chdir(RUBY_EXT_CFC) do
+    ruby 'extconf.rb'
+  end
+  Dir.chdir(RUBY_EXT_CFC) do
+    if system('make').nil?
+      abort "Failed to make cfc ruby extension"
+    end
+  end
+end
+
+# Clean up Ruby extension.
+Dir.glob(File.join('ext', '**', '*.' + rbconfig['OBJEXT'])).each do |file|
+  CLEAN.include(file);
+end
+Dir.glob(File.join('ext', '**', '*.' + rbconfig['DLEXT'])).each do |file|
+  CLEAN.include(file);
+end
+CLEAN.include(File.join('ext', 'Clownfish', 'Makefile'))
+
+task :default => [:cfc_ext]
+
+task :clean => [] do
+  if File.exist?('Makefile')
+    command = ['make', 'distclean']
+    if system(*command).nil?
+      raise "make distclean failed: " + $?.to_s
+    end
+  end
+end
 
 def includes
-  return "-I#{CLOWNFISH_INCLUDE_DIR} -I#{CLOWNFISH_SRC_DIR} -I#{CLOWNFISH_RUBY_DIR} -I#{CLOWNFISH_RUNTIME}"
+  return "-I#{CFC_INCLUDE_DIR} -I#{CFC_SRC_DIR} -I#{CFC_RUBY_DIR}"
 end
