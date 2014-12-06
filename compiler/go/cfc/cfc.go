@@ -67,6 +67,10 @@ func DoStuff() {
 	hierarchy.Build()
 }
 
+type Parcel struct {
+	ref *C.CFCParcel
+}
+
 type Hierarchy struct {
 	ref *C.CFCHierarchy
 }
@@ -77,6 +81,30 @@ type BindCore struct {
 
 type BindC struct {
 	ref *C.CFCC
+}
+
+type BindGo struct {
+	ref *C.CFCGo
+}
+
+type GoClass struct {
+	ref *C.CFCGoClass
+}
+
+func FetchParcel(name string) *Parcel {
+	nameC := C.CString(name)
+	defer C.free(unsafe.Pointer(nameC))
+	parcelC := C.CFCParcel_fetch(nameC)
+	if parcelC == nil {
+		return nil
+	}
+	obj := &Parcel{parcelC}
+	runtime.SetFinalizer(obj, (*Parcel).finalize)
+	return obj
+}
+
+func (obj *Parcel) finalize() {
+	C.CFCBase_decref((*C.CFCBase)(unsafe.Pointer(obj.ref)))
 }
 
 func NewHierarchy(dest string) *Hierarchy {
@@ -159,3 +187,57 @@ func (obj *BindC) WriteCallbacks() {
 func (obj *BindC) WriteHostDefs() {
 	C.CFCC_write_hostdefs(obj.ref)
 }
+
+func NewBindGo(hierarchy *Hierarchy) *BindGo {
+	obj := &BindGo{
+		C.CFCGo_new(hierarchy.ref),
+	}
+	runtime.SetFinalizer(obj, (*BindGo).finalize)
+	return obj
+}
+
+func (obj *BindGo) finalize() {
+	C.CFCBase_decref((*C.CFCBase)(unsafe.Pointer(obj.ref)))
+}
+
+func (obj *BindGo) SetHeader(header string) {
+	headerCString := C.CString(header)
+	defer C.free(unsafe.Pointer(headerCString))
+	C.CFCGo_set_header(obj.ref, headerCString)
+}
+
+func (obj *BindGo) SetFooter(header string) {
+	headerCString := C.CString(header)
+	defer C.free(unsafe.Pointer(headerCString))
+	C.CFCGo_set_header(obj.ref, headerCString)
+}
+
+func (obj *BindGo) WriteBindings(parcelName string, dest string) {
+	parcelNameC := C.CString(parcelName)
+	destC := C.CString(dest)
+	defer C.free(unsafe.Pointer(parcelNameC))
+	defer C.free(unsafe.Pointer(destC))
+	C.CFCGo_write_bindings(obj.ref, parcelNameC, destC)
+}
+
+func NewGoClass(parcel *Parcel, className string) *GoClass {
+	var parcelC *C.CFCParcel
+	if parcel != nil {
+		parcelC = parcel.ref
+	}
+	classNameC := C.CString(className)
+	defer C.free(unsafe.Pointer(classNameC))
+	obj := &GoClass{ C.CFCGoClass_new(parcelC, classNameC) }
+	runtime.SetFinalizer(obj, (*GoClass).finalize)
+	return obj
+}
+
+func (obj *GoClass) finalize() {
+	C.CFCBase_decref((*C.CFCBase)(unsafe.Pointer(obj.ref)))
+}
+
+func RegisterGoClass(binding *GoClass) {
+	C.CFCGoClass_register(binding.ref)
+}
+
+

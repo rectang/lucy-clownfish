@@ -121,11 +121,21 @@ func runCFC() {
 	coreBinding := cfc.NewBindCore(hierarchy, autogenHeader, "")
 	modified := coreBinding.WriteAllModified(false)
 	if modified {
+		bindClasses()
 		cBinding := cfc.NewBindC(hierarchy, autogenHeader, "")
 		cBinding.WriteCallbacks()
-		cBinding.WriteHostDefs()
+		goBinding := cfc.NewBindGo(hierarchy)
+		goBinding.SetHeader(autogenHeader)
+		packageDir := path.Join(buildDir, "clownfish")
+		goBinding.WriteBindings("Clownfish", packageDir)
 		hierarchy.WriteLog()
 	}
+}
+
+func bindClasses() {
+	parcel := cfc.FetchParcel("Clownfish")
+	hashBinding := cfc.NewGoClass(parcel, "Clownfish::Hash")
+	cfc.RegisterGoClass(hashBinding)
 }
 
 func prep() {

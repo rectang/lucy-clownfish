@@ -44,6 +44,11 @@
 #include "CFCBindFunction.h"
 #include "CFCBindMethod.h"
 
+#include "CFCGo.h"
+#include "CFCGoFunc.h"
+#include "CFCGoMethod.h"
+#include "CFCGoClass.h"
+
 #include "CFCPerl.h"
 #include "CFCPerlSub.h"
 #include "CFCPerlMethod.h"
@@ -51,6 +56,7 @@
 #include "CFCPerlConstructor.h"
 #include "CFCPerlPod.h"
 #include "CFCPerlTypeMap.h"
+
 
 #include "CFCRuby.h"
 
