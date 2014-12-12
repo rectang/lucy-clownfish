@@ -29,6 +29,9 @@ CFCGoTypeMap_go_type_name(struct CFCType *type,
                           struct CFCParcel *current_parcel);
 
 char*
+CFCGoTypeMap_cgo_type_name(struct CFCType *type);
+
+char*
 CFCGoTypeMap_go_var_to_c(struct CFCType *type, const char *go_var);
 
 char*

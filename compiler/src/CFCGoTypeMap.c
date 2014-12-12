@@ -125,6 +125,20 @@ CFCGoTypeMap_go_type_name(CFCType *type, CFCParcel *current_parcel) {
 }
 
 char*
+CFCGoTypeMap_cgo_type_name(CFCType *type) {
+    if (CFCType_is_object(type)) {
+        const char *specifier  = CFCType_get_specifier(type);
+        return CFCUtil_sprintf("*C.%s", specifier);
+    }
+    else if (CFCType_is_primitive(type)) {
+        const char *specifier = CFCType_get_specifier(type);
+        return CFCUtil_sprintf("C.%s", specifier);
+    }
+
+    return NULL;
+}
+
+char*
 CFCGoTypeMap_go_var_to_c(CFCType *type, const char *go_var) {
     char *result = NULL;
 
