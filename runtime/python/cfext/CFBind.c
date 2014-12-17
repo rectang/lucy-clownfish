@@ -1,0 +1,426 @@
+/* Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#define CFISH_USE_SHORT_NAMES
+#define C_CFISH_OBJ
+#define C_CFISH_CLASS
+#define C_CFISH_METHOD
+#define C_CFISH_ERR
+#define C_CFISH_LOCKFREEREGISTRY
+
+#include "Python.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <setjmp.h>
+
+#include "CFBind.h"
+
+#include "Clownfish/Obj.h"
+#include "Clownfish/Class.h"
+#include "Clownfish/Method.h"
+#include "Clownfish/Err.h"
+#include "Clownfish/Util/Memory.h"
+#include "Clownfish/Util/StringHelper.h"
+#include "Clownfish/String.h"
+#include "Clownfish/VArray.h"
+#include "Clownfish/Hash.h"
+#include "Clownfish/HashIterator.h"
+#include "Clownfish/ByteBuf.h"
+#include "Clownfish/Num.h"
+#include "Clownfish/LockFreeRegistry.h"
+
+/******************************** Utility **************************************/
+
+void
+CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess) {
+    PyObject *type, *value, *traceback;
+    PyObject *type_pystr = NULL;
+    PyObject *value_pystr = NULL;
+    PyObject *traceback_pystr = NULL;
+    char *type_str = "";
+    char *value_str = "";
+    char *traceback_str = "";
+    PyErr_GetExcInfo(&type, &value, &traceback);
+    if (type != NULL) {
+        PyObject *type_pystr = PyObject_Str(type);
+        type_str = PyUnicode_AsUTF8(type_pystr);
+    }
+    if (value != NULL) {
+        PyObject *value_pystr = PyObject_Str(value);
+        value_str = PyUnicode_AsUTF8(value_pystr);
+    }
+    if (traceback != NULL) {
+        PyObject *traceback_pystr = PyObject_Str(traceback);
+        traceback_str = PyUnicode_AsUTF8(traceback_pystr);
+    }
+    cfish_String *new_mess = cfish_Str_newf("%o... %s: %s %s", mess, type_str,
+                                            value_str, traceback_str);
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(traceback);
+    Py_XDECREF(type_pystr);
+    Py_XDECREF(value_pystr);
+    Py_XDECREF(traceback_pystr);
+    CFISH_DECREF(mess);
+    cfish_Err_throw_mess(err_klass, new_mess);
+}
+
+static PyObject*
+S_cfish_array_to_python_list(cfish_VArray *varray) {
+    uint32_t num_elems = CFISH_VA_Get_Size(varray);
+    PyObject *list = PyList_New(num_elems);
+
+    // Iterate over array elems.
+    for (uint32_t i = 0; i < num_elems; i++) {
+        cfish_Obj *val = CFISH_VA_Fetch(varray, i);
+        PyObject *item = CFBind_cfish_to_py(val);
+        PyList_SET_ITEM(list, i, item);
+    }
+
+    return list;
+}
+
+static PyObject*
+S_cfish_hash_to_python_dict(cfish_Hash *hash) {
+    PyObject *dict = PyDict_New();
+
+    // Iterate over key-value pairs.
+    cfish_HashIterator *iter = cfish_HashIter_new(hash);
+    while (CFISH_HashIter_Next(iter)) {
+        cfish_String *key = (cfish_String*)CFISH_HashIter_Get_Key(iter);
+        if (!CFISH_Obj_Is_A((cfish_Obj*)key, CFISH_STRING)) {
+            CFISH_THROW(CFISH_ERR, "Non-string key: %o",
+                        CFISH_Obj_Get_Class_Name((cfish_Obj*)key));
+        }
+        size_t size = CFISH_Str_Get_Size(key);
+        const char *ptr = CFISH_Str_Get_Ptr8(key);
+        PyObject *py_key = PyUnicode_FromStringAndSize(ptr, size);
+        PyObject *py_val = CFBind_cfish_to_py(CFISH_HashIter_Get_Value(iter));
+        PyDict_SetItem(dict, py_key, py_val);
+        Py_DECREF(py_key);
+        Py_DECREF(py_val);
+    }
+    CFISH_DECREF(iter);
+
+    return dict;
+}
+
+PyObject*
+CFBind_cfish_to_py(Obj *obj) {
+    if (obj == NULL) {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_STRING)) {
+        const char *ptr = CFISH_Str_Get_Ptr8((cfish_String*)obj);
+        size_t size = CFISH_Str_Get_Size((cfish_String*)obj);
+        return PyUnicode_FromStringAndSize(ptr, size);
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_BYTEBUF)) {
+        char *buf = CFISH_BB_Get_Buf((cfish_ByteBuf*)obj);
+        size_t size = CFISH_BB_Get_Size((cfish_ByteBuf*)obj);
+        return PyBytes_FromStringAndSize(buf, size);
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_VARRAY)) {
+        return S_cfish_array_to_python_list((cfish_VArray*)obj);
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_HASH)) {
+        return S_cfish_hash_to_python_dict((cfish_Hash*)obj);
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_FLOATNUM)) {
+        return PyFloat_FromDouble(CFISH_Obj_To_F64(obj));
+    }
+    else if (obj == (cfish_Obj*)CFISH_TRUE) {
+        Py_INCREF(Py_True);
+        return Py_True;
+    }
+    else if (obj == (cfish_Obj*)CFISH_FALSE) {
+        Py_INCREF(Py_False);
+        return Py_False;
+    }
+    else if (CFISH_Obj_Is_A(obj, CFISH_INTNUM)) {
+        int64_t num = CFISH_Obj_To_I64(obj);
+        return PyLong_FromLongLong(num);
+    }
+    else {
+        return (PyObject*)CFISH_Obj_To_Host(obj);
+    }
+}
+
+static cfish_VArray*
+S_py_list_to_varray(PyObject *list) {
+    Py_ssize_t size = PyList_GET_SIZE(list);
+    cfish_VArray *array = VA_new(size);
+    for (Py_ssize_t i = 0; i < size; i++) {
+        CFISH_VA_Store(array, i, CFBind_py_to_cfish(PyList_GET_ITEM(list, i)));
+    }
+    return array;
+}
+
+static cfish_Hash*
+S_py_dict_to_hash(PyObject *dict) {
+    Py_ssize_t pos = 0;
+    PyObject *key, *value;
+    cfish_Hash *hash = cfish_Hash_new(PyDict_Size(dict));
+    while (PyDict_Next(dict, &pos, &key, &value)) {
+        char *ptr;
+        Py_ssize_t size;
+        PyObject *stringified = key;
+        if (!PyUnicode_CheckExact(key)) {
+            stringified = PyObject_Str(key);
+        }
+        ptr = PyUnicode_AsUTF8AndSize(stringified, &size);
+        if (!ptr) {
+            cfish_String *mess = MAKE_MESS("Failed to stringify as UTF-8");
+            CFBind_reraise_pyerr(CFISH_ERR, mess);
+        }
+        CFISH_Hash_Store_Utf8(hash, ptr, size, CFBind_py_to_cfish(value));
+        if (stringified != key) {
+            Py_DECREF(stringified);
+        }
+    }
+    return hash;
+}
+
+Obj*
+CFBind_py_to_cfish(PyObject *py_obj) {
+    if (!py_obj || py_obj == Py_None) {
+        return NULL;
+    }
+    else if (py_obj == Py_True) {
+        return (cfish_Obj*)CFISH_TRUE;
+    }
+    else if (py_obj == Py_False) {
+        return (cfish_Obj*)CFISH_FALSE;
+    }
+    else if (PyUnicode_CheckExact(py_obj)) {
+        // TODO: Allow Clownfish String to wrap buffer of Python str?
+        Py_ssize_t size;
+        char *ptr = PyUnicode_AsUTF8AndSize(py_obj, &size);
+        // TODO: Can we guarantee that Python will always supply valid UTF-8?
+        if (!ptr || !cfish_StrHelp_utf8_valid(ptr, size)) {
+            CFISH_THROW(CFISH_ERR, "Failed to convert Python string to UTF8");
+        }
+        return (cfish_Obj*) cfish_Str_new_from_trusted_utf8(ptr, size);
+    }
+    else if (PyBytes_CheckExact(py_obj)) {
+        char *ptr = PyBytes_AS_STRING(py_obj);
+        Py_ssize_t size = PyBytes_GET_SIZE(py_obj);
+        return (cfish_Obj*)cfish_BB_new_bytes(ptr, size);
+    }
+    else if (PyList_CheckExact(py_obj)) {
+        return (cfish_Obj*)S_py_list_to_varray(py_obj);
+    }
+    else if (PyDict_CheckExact(py_obj)) {
+        return (cfish_Obj*)S_py_dict_to_hash(py_obj);
+    }
+    else if (PyLong_CheckExact(py_obj)) {
+        // Raises ValueError on overflow.
+        return (cfish_Obj*)cfish_Int64_new(PyLong_AsLongLong(py_obj));
+    }
+    else if (PyFloat_CheckExact(py_obj)) {
+        return (cfish_Obj*)cfish_Float64_new(PyFloat_AS_DOUBLE(py_obj));
+    }
+    else {
+        // TODO: Wrap in some sort of cfish_Host object instead of
+        // stringifying?
+        PyObject *stringified = PyObject_Str(py_obj);
+        if (stringified == NULL) {
+            cfish_String *mess = MAKE_MESS("Couldn't stringify object");
+            CFBind_reraise_pyerr(CFISH_ERR, mess);
+        }
+        cfish_Obj *retval = CFBind_py_to_cfish(stringified);
+        Py_DECREF(stringified);
+        return retval;
+    }
+}
+
+/******************************** Obj **************************************/
+
+uint32_t
+Obj_Get_RefCount_IMP(Obj *self) {
+    return Py_REFCNT(self);
+}
+
+Obj*
+Obj_Inc_RefCount_IMP(Obj *self) {
+    Py_INCREF(self);
+    return self;
+}
+
+uint32_t
+Obj_Dec_RefCount_IMP(Obj *self) {
+    uint32_t modified_refcount = Py_REFCNT(self);
+    Py_DECREF(self);
+    return modified_refcount;
+}
+
+void*
+Obj_To_Host_IMP(Obj *self) {
+    return self;
+}
+
+/******************************* Class *************************************/
+
+extern cfish_Hash *klass2klass;
+
+Obj*
+Class_Make_Obj_IMP(Class *self) {
+    fprintf(stderr, "TODO: must use Python type object");
+    Obj *obj = (Obj*)Memory_wrapped_calloc(self->obj_alloc_size, 1);
+    obj->klass = self;
+    //obj->refcount = 1;
+    return obj;
+}
+
+Obj*
+Class_Init_Obj_IMP(Class *self, void *allocation) {
+    fprintf(stderr, "TODO: must use Python type object");
+    Obj *obj = (Obj*)allocation;
+    obj->klass = self;
+    //obj->refcount = 1;
+    return obj;
+}
+
+Obj*
+Class_Foster_Obj_IMP(Class *self, void *host_obj) {
+    UNUSED_VAR(self);
+    UNUSED_VAR(host_obj);
+    THROW(ERR, "TODO");
+    UNREACHABLE_RETURN(Obj*);
+}
+
+void
+Class_register_with_host(Class *singleton, Class *parent) {
+    UNUSED_VAR(singleton);
+    UNUSED_VAR(parent);
+}
+
+VArray*
+Class_fresh_host_methods(String *class_name) {
+    UNUSED_VAR(class_name);
+    return VA_new(0);
+}
+
+String*
+Class_find_parent_class(String *class_name) {
+    UNUSED_VAR(class_name);
+    THROW(ERR, "TODO");
+    UNREACHABLE_RETURN(String*);
+}
+
+void*
+Class_To_Host_IMP(Class *self) {
+    UNUSED_VAR(self);
+    THROW(ERR, "TODO");
+    UNREACHABLE_RETURN(void*);
+}
+
+/******************************* Method ************************************/
+
+String*
+Method_Host_Name_IMP(Method *self) {
+    return (String*)INCREF(self->name);
+}
+
+/******************************** Err **************************************/
+
+/* TODO: Thread safety */
+static Err *current_error;
+static Err *thrown_error;
+static jmp_buf  *current_env;
+
+void
+Err_init_class(void) {
+}
+
+Err*
+Err_get_error() {
+    return current_error;
+}
+
+void
+Err_set_error(Err *error) {
+    if (current_error) {
+        DECREF(current_error);
+    }
+    current_error = error;
+}
+
+void
+Err_do_throw(Err *error) {
+    if (current_env) {
+        thrown_error = error;
+        longjmp(*current_env, 1);
+    }
+    else {
+        String *message = Err_Get_Mess(error);
+        char *utf8 = Str_To_Utf8(message);
+        fprintf(stderr, "%s", utf8);
+        FREEMEM(utf8);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void*
+Err_To_Host_IMP(Err *self) {
+    UNUSED_VAR(self);
+    THROW(ERR, "TODO");
+    UNREACHABLE_RETURN(void*);
+}
+
+void
+Err_throw_mess(Class *klass, String *message) {
+    UNUSED_VAR(klass);
+    Err *err = Err_new(message);
+    Err_do_throw(err);
+}
+
+void
+Err_warn_mess(String *message) {
+    char *utf8 = Str_To_Utf8(message);
+    fprintf(stderr, "%s", utf8);
+    FREEMEM(utf8);
+    DECREF(message);
+}
+
+Err*
+Err_trap(Err_Attempt_t routine, void *context) {
+    jmp_buf  env;
+    jmp_buf *prev_env = current_env;
+    current_env = &env;
+
+    if (!setjmp(env)) {
+        routine(context);
+    }   
+
+    current_env = prev_env;
+
+    Err *error = thrown_error;
+    thrown_error = NULL;
+    return error;
+}
+
+/************************** LockFreeRegistry *******************************/
+
+void*
+LFReg_To_Host_IMP(LockFreeRegistry *self) {
+    UNUSED_VAR(self);
+    THROW(ERR, "TODO");
+    UNREACHABLE_RETURN(void*);
+}
+
+
