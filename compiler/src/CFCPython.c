@@ -394,6 +394,58 @@ S_write_callbacks(CFCPython *self, CFCParcel *parcel) {
     FREEMEM(ordered);
 }
 
+static void
+S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
+    const char *prefix = CFCParcel_get_prefix(parcel);
+    char *prefix_copy = CFCUtil_strdup(CFCParcel_get_name(parcel));
+    char *last_dot = strrchr(prefix_copy, '.');
+    char *last_component = last_dot != NULL
+                           ? last_dot + 1
+                           : prefix_copy;
+    char *pymod_name = CFCUtil_sprintf("%s._%s", CFCParcel_get_name(parcel),
+                                       last_component);
+    // TODO: Stop lowercasing when parcels are restricted to lowercase.
+    for (int i = 0; prefix_copy[i] != '\0'; i++) {
+        prefix_copy[i] = tolower(prefix_copy[i]);
+    }
+    for (int i = 0; pymod_name[i] != '\0'; i++) {
+        pymod_name[i] = tolower(pymod_name[i]);
+    }
+
+    const char pattern[] =
+        "%s\n"
+        "\n"
+        "#include \"Python.h\"\n"
+        "#include \"%sparcel.h\"\n"
+        "\n"
+        "static PyModuleDef module_def = {\n"
+        "    PyModuleDef_HEAD_INIT,\n"
+        "    \"%s\",\n"
+        "    NULL,\n"
+        "    -1,\n"
+        "    NULL, NULL, NULL, NULL, NULL\n"
+        "};\n"
+        "\n"
+        "PyMODINIT_FUNC\n"
+        "PyInit__%s(void) {\n"
+        "    %sbootstrap_parcel();\n"
+        "    PyObject *module = PyModule_Create(&module_def);\n"
+        "    return module;\n"
+        "}\n"
+        ;
+    char *content = CFCUtil_sprintf(pattern, self->header, prefix, pymod_name,
+                                    last_component, prefix);
+
+    char *filepath = CFCUtil_sprintf("%s" CHY_DIR_SEP "_%s.c", dest,
+                                     last_component);
+    CFCUtil_write_if_changed(filepath, content, strlen(content));
+
+    FREEMEM(content);
+    FREEMEM(filepath);
+    FREEMEM(pymod_name);
+    FREEMEM(prefix_copy);
+}
+
 void
 CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *dest) {
     CFCParcel *parcel = CFCParcel_fetch(parcel_name);
@@ -402,6 +454,7 @@ CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *d
     }
     S_write_hostdefs(self);
     S_write_callbacks(self, parcel);
+    S_write_module_file(self, parcel, dest);
 }
 
 
