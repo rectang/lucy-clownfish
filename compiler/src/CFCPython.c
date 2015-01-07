@@ -29,7 +29,7 @@
 #include "CFCMethod.h"
 #include "CFCHierarchy.h"
 #include "CFCUtil.h"
-//#include "CFCPyClass.h"
+#include "CFCPyClass.h"
 //#include "CFCPyFunc.h"
 #include "CFCPyMethod.h"
 //#include "CFCPyConstructor.h"
@@ -141,7 +141,7 @@ S_write_callbacks(CFCPython *self, CFCParcel *parcel) {
         CFCClass *klass = ordered[i];
         if (CFCClass_included(klass)
             || CFCClass_inert(klass)
-            || CFCClass_get_parcel(klass) != parcel
+            //|| CFCClass_get_parcel(klass) != parcel
            ) {
             continue;
         }
@@ -402,39 +402,25 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
     char *last_component = last_dot != NULL
                            ? last_dot + 1
                            : prefix_copy;
-    char *pymod_name = CFCUtil_sprintf("%s._%s", CFCParcel_get_name(parcel),
-                                       last_component);
     // TODO: Stop lowercasing when parcels are restricted to lowercase.
-    for (int i = 0; prefix_copy[i] != '\0'; i++) {
-        prefix_copy[i] = tolower(prefix_copy[i]);
-    }
-    for (int i = 0; pymod_name[i] != '\0'; i++) {
-        pymod_name[i] = tolower(pymod_name[i]);
+    for (int i = 0; last_component[i] != '\0'; i++) {
+        last_component[i] = tolower(last_component[i]);
     }
 
     const char pattern[] =
         "%s\n"
         "\n"
         "#include \"Python.h\"\n"
-        "#include \"%sparcel.h\"\n"
-        "\n"
-        "static PyModuleDef module_def = {\n"
-        "    PyModuleDef_HEAD_INIT,\n"
-        "    \"%s\",\n"
-        "    NULL,\n"
-        "    -1,\n"
-        "    NULL, NULL, NULL, NULL, NULL\n"
-        "};\n"
+        "#include \"bindings.h\"\n"
         "\n"
         "PyMODINIT_FUNC\n"
         "PyInit__%s(void) {\n"
-        "    %sbootstrap_parcel();\n"
-        "    PyObject *module = PyModule_Create(&module_def);\n"
-        "    return module;\n"
+        "    return %sbootstrap_from_host();\n"
         "}\n"
+        "%s"
         ;
-    char *content = CFCUtil_sprintf(pattern, self->header, prefix, pymod_name,
-                                    last_component, prefix);
+    char *content = CFCUtil_sprintf(pattern, self->header, last_component,
+                                    prefix, self->footer);
 
     char *filepath = CFCUtil_sprintf("%s" CHY_DIR_SEP "_%s.c", dest,
                                      last_component);
@@ -442,8 +428,181 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
 
     FREEMEM(content);
     FREEMEM(filepath);
-    FREEMEM(pymod_name);
     FREEMEM(prefix_copy);
+}
+
+static char*
+S_gen_type_linkups(CFCPython *self, CFCParcel *parcel, CFCClass **ordered) {
+    char *handles  = CFCUtil_strdup("");
+    char *py_types = CFCUtil_strdup("");
+    int num_items = 0;
+
+    for (size_t i = 0; ordered[i] != NULL; i++) {
+        CFCClass *klass = ordered[i];
+        if (CFCClass_included(klass) || CFCClass_inert(klass)) {
+            continue;
+        }
+        const char *class_var = CFCClass_full_class_var(klass);
+        const char *struct_sym = CFCClass_get_struct_sym(klass);
+        char *handles_temp
+            = CFCUtil_sprintf("%s    handles[%d]  = &%s;\n",
+                              handles, num_items, class_var);
+        char *py_types_temp
+            = CFCUtil_sprintf("%s    py_types[%d] = &%s_pytype_struct;\n",
+                              py_types, num_items, struct_sym);
+        FREEMEM(handles);
+        FREEMEM(py_types);
+        handles  = handles_temp;
+        py_types = py_types_temp;
+        num_items++;
+    }
+
+    char pattern[] =
+        "static void\n"
+        "S_link_py_types(void) {\n"
+        "    const int num_items = %d;\n"
+        "    size_t handles_size  = num_items * sizeof(cfish_Class**);\n"
+        "    size_t py_types_size = num_items * sizeof(PyTypeObject*);\n"
+        "    cfish_Class ***handles  = (cfish_Class***)CFISH_MALLOCATE(handles_size);\n"
+        "    PyTypeObject **py_types = (PyTypeObject**)CFISH_MALLOCATE(py_types_size);\n"
+        "%s\n"
+        "%s\n"
+        "    CFBind_assoc_py_types(handles, py_types, num_items);\n"
+        "    CFISH_FREEMEM(handles);\n"
+        "    CFISH_FREEMEM(py_types);\n"
+        "}\n"
+        ;
+    char *content = CFCUtil_sprintf(pattern, num_items, handles, py_types);
+
+    FREEMEM(handles);
+    FREEMEM(py_types);
+    return content;
+}
+
+static char*
+S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
+                     const char *pymod_name, CFCClass **ordered) {
+    char *bindings = CFCUtil_strdup("");
+    for (size_t i = 0; ordered[i] != NULL; i++) {
+        CFCClass *klass = ordered[i];
+        if (CFCClass_included(klass) || CFCClass_inert(klass)) {
+            continue;
+        }
+        char *struct_def = CFCPyClass_pytype_struct_def(klass, pymod_name);
+        bindings = CFCUtil_cat(bindings, struct_def, NULL);
+        FREEMEM(struct_def);
+    }
+    return bindings;
+}
+
+static void
+S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
+    const char *parcel_name = CFCParcel_get_name(parcel);
+    const char *last_dot = strrchr(parcel_name, '.');
+    const char *last_component = last_dot != NULL
+                                 ? last_dot + 1
+                                 : parcel_name;
+    char *pymod_name = CFCUtil_strdup(parcel_name);
+    char *helper_mod_name = CFCUtil_sprintf("%s._%s", parcel_name, last_component);
+    // TODO: Stop lowercasing when parcels are restricted to lowercase.
+    for (int i = 0; pymod_name[i] != '\0'; i++) {
+        pymod_name[i] = tolower(pymod_name[i]);
+    }
+    for (int i = 0; helper_mod_name[i] != '\0'; i++) {
+        helper_mod_name[i] = tolower(helper_mod_name[i]);
+    }
+
+    const char *prefix = CFCParcel_get_prefix(parcel);
+    CFCClass  **ordered = CFCHierarchy_ordered_classes(self->hierarchy);
+    CFCParcel **parcels = CFCParcel_all_parcels();
+    char *type_linkups = S_gen_type_linkups(self, parcel, ordered);
+    char *pound_includes     = CFCUtil_strdup("");
+    char *class_bindings     = S_gen_class_bindings(self, parcel, pymod_name, ordered);
+    char *parcel_boots       = CFCUtil_strdup("");
+    char *pytype_ready_calls = CFCUtil_strdup("");
+    char *module_adds        = CFCUtil_strdup("");
+
+    for (size_t i = 0; parcels[i]; ++i) {
+        if (!CFCParcel_included(parcels[i])) {
+            const char *prefix = CFCParcel_get_prefix(parcels[i]);
+            parcel_boots = CFCUtil_cat(parcel_boots, "    ", prefix,
+                                       "bootstrap_parcel();\n", NULL);
+        }
+    }
+
+    for (size_t i = 0; ordered[i] != NULL; i++) {
+        CFCClass *klass = ordered[i];
+        if (CFCClass_included(klass)) { continue; }
+
+        const char *include_h  = CFCClass_include_h(klass);
+        pound_includes = CFCUtil_cat(pound_includes, "#include \"",
+                                     include_h, "\"\n", NULL);
+
+        if (CFCClass_inert(klass)) { continue; }
+
+        const char *struct_sym = CFCClass_get_struct_sym(klass);
+        pytype_ready_calls = CFCUtil_cat(pytype_ready_calls,
+            "    if (PyType_Ready(&", struct_sym, "_pytype_struct) < 0) { return NULL; }\n", NULL);
+    }
+
+    const char pattern[] =
+        "%s\n"
+        "\n"
+        "#include \"Python.h\"\n"
+        "#include \"cfish_parcel.h\"\n"
+        "#include \"CFBind.h\"\n"
+        "%s\n"
+        "\n"
+        "static PyModuleDef module_def = {\n"
+        "    PyModuleDef_HEAD_INIT,\n"
+        "    \"%s\",\n" // module name
+        "    NULL,\n" // docstring
+        "    -1,\n"
+        "    NULL, NULL, NULL, NULL, NULL\n"
+        "};\n"
+        "\n"
+        "%s" // class bindings
+        "\n"
+        "%s" // S_link_py_types function
+        "\n"
+        "PyMODINIT_FUNC\n"
+        "PyInit__%s(void) {\n"
+        "%s\n" // PyType_Ready calls
+        "\n"
+        "    PyObject *module = PyModule_Create(&module_def);\n"
+        "%s\n" // Add types to module
+        "\n"
+        "    S_link_py_types();\n"
+        "\n"
+        "%s\n" // parcel boots
+        "\n"
+        "    return module;\n"
+        "}\n"
+        "\n"
+        "%s\n"
+        "\n";
+
+    char *content
+        = CFCUtil_sprintf(pattern, self->header, pound_includes, helper_mod_name,
+                          class_bindings, type_linkups, last_component,
+                          pytype_ready_calls, module_adds, parcel_boots,
+                          self->footer);
+
+    char *filepath = CFCUtil_sprintf("%s" CHY_DIR_SEP "_%s.c", dest,
+                                     last_component);
+    CFCUtil_write_if_changed(filepath, content, strlen(content));
+    FREEMEM(filepath);
+
+    FREEMEM(content);
+    FREEMEM(module_adds);
+    FREEMEM(pytype_ready_calls);
+    FREEMEM(parcel_boots);
+    FREEMEM(class_bindings);
+    FREEMEM(helper_mod_name);
+    FREEMEM(pymod_name);
+    FREEMEM(pound_includes);
+    FREEMEM(type_linkups);
+    FREEMEM(ordered);
 }
 
 void
