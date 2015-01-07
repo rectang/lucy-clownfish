@@ -31,6 +31,7 @@ class Clownfish::Class inherits Clownfish::Obj {
     int32_t             parcel_id;
     size_t              obj_alloc_size;
     size_t              class_alloc_size;
+    void               *host_type;
     Method            **methods;
     cfish_method_t[1]   vtable; /* flexible array */
 
