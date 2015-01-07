@@ -31,6 +31,7 @@
 #include "Clownfish/Class.h"
 #include "Clownfish/Method.h"
 #include "Clownfish/Err.h"
+#include "Clownfish/Util/Atomic.h"
 #include "Clownfish/Util/Memory.h"
 #include "Clownfish/Util/StringHelper.h"
 #include "Clownfish/String.h"
@@ -40,6 +41,8 @@
 #include "Clownfish/ByteBuf.h"
 #include "Clownfish/Num.h"
 #include "Clownfish/LockFreeRegistry.h"
+
+static bool Err_initialized;
 
 /******************************** Utility **************************************/
 
@@ -249,6 +252,68 @@ CFBind_py_to_cfish(PyObject *py_obj) {
     }
 }
 
+typedef struct ClassMapElem {
+    cfish_Class **klass_handle;
+    PyTypeObject *py_type;
+} ClassMapElem;
+
+typedef struct ClassMap {
+    int32_t size;
+    ClassMapElem *elems;
+} ClassMap;
+
+/* Before we can invoke methods on any Clownfish object safely, we must know
+ * about its corresponding Python type object.  This association must be made
+ * early in the bootstrapping process, which is tricky.  We can't use any
+ * of Clownfish's convenient data structures yet!
+ */
+static ClassMap *klass_map = NULL;
+
+static ClassMap*
+S_revise_class_map(ClassMap *current, cfish_Class ***klass_handles,
+                   PyTypeObject **py_types, int32_t num_items) {
+    int32_t num_current = current ? current->size : 0;
+    int32_t total = num_current + num_items;
+    ClassMap *revised = (ClassMap*)malloc(sizeof(ClassMap));
+    revised->elems = (ClassMapElem*)malloc(total * sizeof(ClassMapElem));
+    if (current) {
+        size_t size = num_current * sizeof(ClassMapElem);
+        memcpy(revised->elems, current->elems, size);
+    }
+    for (int32_t i = 0; i < num_items; i++) {
+        revised->elems[i + num_current].klass_handle = klass_handles[i];
+        revised->elems[i + num_current].py_type      = py_types[i];
+    }
+    revised->size = total;
+    return revised;
+}
+
+void
+CFBind_assoc_py_types(cfish_Class ***klass_handles, PyTypeObject **py_types,
+                      int32_t num_items) {
+    while (1) {
+        ClassMap *current = klass_map;
+        ClassMap *revised = S_revise_class_map(current, klass_handles,
+                                               py_types, num_items);
+        if (cfish_Atomic_cas_ptr((void*volatile*)&klass_map, current, revised)) {
+            if (current) {
+                // TODO: Use read locking.  For now we have to leak this
+                // memory to avoid memory errors in case another thread isn't
+                // done reading it yet.
+
+                //free(current->elems);
+                //free(current);
+            }
+            break;
+        }
+        else {
+            // Another thread beat us to it.  Try again.
+            free(revised->elems);
+            free(revised);
+        }
+    }
+}
+
 /******************************** Obj **************************************/
 
 uint32_t
@@ -276,29 +341,79 @@ CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
 
 /******************************* Class *************************************/
 
+static PyTypeObject*
+S_get_cached_py_type(cfish_Class *self) {
+    PyTypeObject *py_type = (PyTypeObject*)self->host_type;
+    if (py_type == NULL) {
+        ClassMap *current = klass_map;
+        for (int32_t i = 0; i < current->size; i++) {
+            cfish_Class **handle = current->elems[i].klass_handle;
+            if (handle == NULL || *handle != self) {
+                continue;
+            }
+            py_type = current->elems[i].py_type;
+            Py_INCREF(py_type);
+            if (!cfish_Atomic_cas_ptr((void*volatile*)&self->host_type, py_type, NULL)) {
+                // Lost the race to another thread, so get rid of the refcount.
+                Py_DECREF(py_type);
+            }
+
+            // FIXME HEINOUS HACK!  We don't know the size of the object until
+            // after bootstrapping.
+            py_type->tp_basicsize = self->obj_alloc_size;
+            break;
+        }
+    }
+    if (py_type == NULL) {
+        if (Err_initialized) {
+            CFISH_THROW(CFISH_ERR,
+                        "Can't find a Python type object corresponding to %o",
+                        CFISH_Class_Get_Name(self));
+        }
+        else {
+            fprintf(stderr, "Can't find a Python type corresponding to a "
+                            "Clownfish class\n");
+            exit(1);
+        }
+
+    }
+    return py_type;
+}
+
 cfish_Obj*
 CFISH_Class_Make_Obj_IMP(cfish_Class *self) {
-    fprintf(stderr, "TODO: must use Python type object");
-    cfish_Obj *obj = (cfish_Obj*)cfish_Memory_wrapped_calloc(self->obj_alloc_size, 1);
+    PyTypeObject *py_type = S_get_cached_py_type(self);
+    cfish_Obj *obj = (cfish_Obj*)py_type->tp_alloc(py_type, 0);
     obj->klass = self;
-    //obj->refcount = 1;
     return obj;
 }
 
 cfish_Obj*
 CFISH_Class_Init_Obj_IMP(cfish_Class *self, void *allocation) {
-    fprintf(stderr, "TODO: must use Python type object");
+    PyTypeObject *py_type = S_get_cached_py_type(self);
+    // It would be nice if we could call PyObject_Init() here and feel
+    // confident that we have performed all Python-specific initialization
+    // under all possible configurations, but that's not possible.  In
+    // addition to setting ob_refcnt and ob_type, PyObject_Init() performs
+    // tracking for heap allocated objects under special builds -- but
+    // Class_Init_Obj() may be called on non-heap memory, such as
+    // stack-allocated Clownfish Strings.  Therefore, we must perform a subset
+    // of tasks selected from PyObject_Init() manually.
     cfish_Obj *obj = (cfish_Obj*)allocation;
+    obj->ob_base.ob_refcnt = 1;
+    obj->ob_base.ob_type = py_type;
     obj->klass = self;
-    //obj->refcount = 1;
     return obj;
 }
 
+/* Foster_Obj() is only needed under hosts where host object allocation and
+ * Clownfish object allocation are separate.  When Clownfish is used under
+ * Python, Clownfish objects *are* Python objects. */
 cfish_Obj*
 CFISH_Class_Foster_Obj_IMP(cfish_Class *self, void *host_obj) {
     CFISH_UNUSED_VAR(self);
     CFISH_UNUSED_VAR(host_obj);
-    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_THROW(CFISH_ERR, "Unimplemented");
     CFISH_UNREACHABLE_RETURN(cfish_Obj*);
 }
 
@@ -344,6 +459,7 @@ static jmp_buf  *current_env;
 
 void
 cfish_Err_init_class(void) {
+    Err_initialized = true;
 }
 
 cfish_Err*
