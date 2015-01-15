@@ -14,39 +14,22 @@
  * limitations under the License.
  */
 
-#ifndef H_CFCPYMETHOD
-#define H_CFCPYMETHOD
+#ifndef H_CFCPYCLASS
+#define H_CFCPYCLASS
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-struct CFCMethod;
+struct CFCParcel;
 struct CFCClass;
 
-/* Check for:
- * - private methods
- * - methods with types which cannot be mapped automatically
- */
-int
-CFCPyMethod_can_be_bound(struct CFCMethod *method);
-
-/** Return C code which knows how to call back into Python for this method.  This
- * code is run when a Python subclass has overridden a method in a Clownfish base
- * class.
- */
 char*
-CFCPyMethod_callback_def(struct CFCMethod *method);
-
-char*
-CFCPyMethod_wrapper(struct CFCMethod *method, struct CFCClass *invoker);
-
-char*
-CFCPyMethod_pymethoddef(struct CFCMethod *method, struct CFCClass *invoker);
+CFCPyClass_pytype_struct_def(struct CFCClass *klass, const char *pymod_name);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* H_CFCPYMETHOD */
+#endif /* H_CFCPYCLASS */
 
