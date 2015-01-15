@@ -72,6 +72,11 @@ CFBind_cfish_to_py(cfish_Obj *obj);
 cfish_Obj*
 CFBind_py_to_cfish(PyObject *py_obj);
 
+/** FIXME temp hack.
+  */
+cfish_Obj*
+CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass);
+
 /** Associate Clownfish classes with Python type objects.  (Internal-only,
   * used during bootstrapping.)
   */
