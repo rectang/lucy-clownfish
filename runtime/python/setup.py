@@ -163,6 +163,7 @@ clownfish_extension = Extension('clownfish._clownfish',
                                  include_dirs = [
                                     CORE_SOURCE_DIR,
                                     AUTOGEN_INCLUDE,
+                                    CFEXT_DIR,
                                     os.curdir,
                                  ],
                                  extra_link_args = [LIBCLOWNFISH_PATH],
