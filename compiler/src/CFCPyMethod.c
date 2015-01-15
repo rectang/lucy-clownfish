@@ -52,12 +52,8 @@ S_build_unused_vars(CFCVariable **vars);
 static char*
 S_maybe_unreachable(CFCType *return_type);
 
-/* Check for:
- * - private methods
- * - methods with types which cannot be mapped automatically
- */
-static int
-S_can_be_bound(CFCMethod *method) {
+int
+CFCPyMethod_can_be_bound(CFCMethod *method) {
     if (CFCSymbol_private((CFCSymbol*)method)) {
         return false;
     }
@@ -181,7 +177,7 @@ CFCPyMethod_callback_def(CFCMethod *method) {
     const char   *params       = CFCParamList_to_c(param_list);
     char *content;
 
-    if (S_can_be_bound(method)) {
+    if (CFCPyMethod_can_be_bound(method)) {
         char *py_args = S_build_py_args(param_list);
         char *invocation = S_build_pymeth_invocation(method);
         char *refcount_mods = S_callback_refcount_mods(param_list);
@@ -250,4 +246,66 @@ S_maybe_unreachable(CFCType *return_type) {
     return return_statement;
 }
 
+char*
+S_meth_top(CFCMethod *method) {
+    CFCParamList *param_list = CFCMethod_get_param_list(method);
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    CFCType *self_type = CFCVariable_get_type(vars[0]);
+    const char *self_type_str = CFCType_to_c(self_type);
+    const char *self_class_var = CFCType_get_class_var(self_type);
+
+    if (CFCParamList_num_vars(param_list) == 1) {
+        char pattern[] =
+            "(PyObject *py_self, PyObject *unused) {\n"
+            "    %s self = (%s)CFBind_maybe_py_to_cfish(py_self, %s);\n"
+            "    CFISH_UNUSED_VAR(unused);\n";
+        return CFCUtil_sprintf(pattern, self_type_str, self_type_str,
+                               self_class_var);
+    }
+    else {
+        char *keywords = CFCUtil_strdup("");
+        for (int i = 1; vars[i] != NULL; i++) {
+            const char *var_name = CFCVariable_micro_sym(vars[i]);
+            keywords = CFCUtil_cat(keywords, "\"", var_name, "\", ", NULL);
+        }
+        char pattern[] =
+            "(PyObject *py_self, PyObject *args, PyObject *kwargs) {\n"
+            "    char *keywords[] = {%sNULL};\n"
+            "    %s self = (%s)CFBind_maybe_py_to_cfish(py_self, %s);\n";
+        return CFCUtil_sprintf(pattern, keywords, self_type_str, self_type_str,
+                               self_class_var);
+    }
+}
+
+char*
+CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
+    CFCType *return_type = CFCMethod_get_return_type(method);
+    char *meth_sym = CFCMethod_full_method_sym(method, invoker);
+    char *meth_top = S_meth_top(method);
+    char pattern[] =
+        "static PyObject*\n"
+        "S_%s%s"
+        "    Py_RETURN_NONE;\n"
+        "}\n"
+        ;
+    char *wrapper = CFCUtil_sprintf(pattern, meth_sym, meth_top);
+    FREEMEM(meth_sym);
+    FREEMEM(meth_top);
+    return wrapper;
+}
+
+char*
+CFCPyMethod_pymethoddef(CFCMethod *method, CFCClass *invoker) {
+    CFCParamList *param_list = CFCMethod_get_param_list(method);
+    const char *flags = CFCParamList_num_vars(param_list) == 1
+                        ? "METH_NOARGS"
+                        : "METH_KEYWORDS|METH_VARARGS";
+    const char *micro_sym = CFCSymbol_micro_sym((CFCSymbol*)method);
+    char *meth_sym = CFCMethod_full_method_sym(method, invoker);
+    char pattern[] =
+        "{\"%s\", (PyCFunction)S_%s, %s, NULL},";
+    char *py_meth_def = CFCUtil_sprintf(pattern, micro_sym, meth_sym, flags);
+    FREEMEM(meth_sym);
+    return py_meth_def;
+}
 
