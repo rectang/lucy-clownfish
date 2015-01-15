@@ -199,6 +199,16 @@ S_py_dict_to_hash(PyObject *dict) {
 }
 
 cfish_Obj*
+CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass) {
+    cfish_Obj *obj = CFBind_py_to_cfish(py_obj);
+    if (obj && !CFISH_Obj_Is_A(obj, klass)) {
+        CFISH_DECREF(obj);
+        obj = NULL;
+    }
+    return obj;
+}
+
+cfish_Obj*
 CFBind_py_to_cfish(PyObject *py_obj) {
     if (!py_obj || py_obj == Py_None) {
         return NULL;
