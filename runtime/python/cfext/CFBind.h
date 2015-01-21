@@ -54,6 +54,12 @@ CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess);
 PyObject*
 CFBind_cfish_to_py(cfish_Obj *obj);
 
+/* Perform the same conversion as `CFBind_cfish_to_py`, but ensure that the
+ * result is refcount-neutral, taking ownership of a refcount from `obj`.
+ */
+PyObject*
+CFBind_cfish_to_py_zeroref(cfish_Obj *obj);
+
 /** Perform recursive conversion of Python objects to Clownfish, return an
   * incremented Clownfish Obj.
   *
