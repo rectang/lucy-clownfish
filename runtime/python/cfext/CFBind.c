@@ -129,46 +129,69 @@ S_cfish_hash_to_python_dict(cfish_Hash *hash) {
     return dict;
 }
 
-PyObject*
-CFBind_cfish_to_py(cfish_Obj *obj) {
+static PyObject*
+S_cfish_to_py(cfish_Obj *obj, bool zeroref) {
+    PyObject *retval = NULL;
+
     if (obj == NULL) {
         Py_INCREF(Py_None);
-        return Py_None;
+        retval = Py_None;
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_STRING)) {
         const char *ptr = CFISH_Str_Get_Ptr8((cfish_String*)obj);
         size_t size = CFISH_Str_Get_Size((cfish_String*)obj);
-        return PyUnicode_FromStringAndSize(ptr, size);
+        retval = PyUnicode_FromStringAndSize(ptr, size);
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_BYTEBUF)) {
         char *buf = CFISH_BB_Get_Buf((cfish_ByteBuf*)obj);
         size_t size = CFISH_BB_Get_Size((cfish_ByteBuf*)obj);
-        return PyBytes_FromStringAndSize(buf, size);
+        retval = PyBytes_FromStringAndSize(buf, size);
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_VARRAY)) {
-        return S_cfish_array_to_python_list((cfish_VArray*)obj);
+        retval = S_cfish_array_to_python_list((cfish_VArray*)obj);
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_HASH)) {
-        return S_cfish_hash_to_python_dict((cfish_Hash*)obj);
+        retval = S_cfish_hash_to_python_dict((cfish_Hash*)obj);
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_FLOATNUM)) {
-        return PyFloat_FromDouble(CFISH_Obj_To_F64(obj));
+        retval = PyFloat_FromDouble(CFISH_Obj_To_F64(obj));
     }
     else if (obj == (cfish_Obj*)CFISH_TRUE) {
         Py_INCREF(Py_True);
-        return Py_True;
+        retval = Py_True;
     }
     else if (obj == (cfish_Obj*)CFISH_FALSE) {
         Py_INCREF(Py_False);
-        return Py_False;
+        retval = Py_False;
     }
     else if (CFISH_Obj_Is_A(obj, CFISH_INTNUM)) {
         int64_t num = CFISH_Obj_To_I64(obj);
-        return PyLong_FromLongLong(num);
+        retval = PyLong_FromLongLong(num);
     }
     else {
-        return (PyObject*)CFISH_Obj_To_Host(obj);
+        if (zeroref) {
+            retval = (PyObject*)obj;
+            zeroref = false;
+        }
+        else {
+            retval = (PyObject*)CFISH_INCREF(obj);
+        }
     }
+
+    if (zeroref) {
+        CFISH_DECREF(obj);
+    }
+    return retval;
+}
+
+PyObject*
+CFBind_cfish_to_py(cfish_Obj *obj) {
+    return S_cfish_to_py(obj, false);
+}
+
+PyObject*
+CFBind_cfish_to_py_zeroref(cfish_Obj *obj) {
+    return S_cfish_to_py(obj, true);
 }
 
 static cfish_VArray*
