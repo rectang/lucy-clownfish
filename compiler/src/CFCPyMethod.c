@@ -52,14 +52,9 @@ S_build_unused_vars(CFCVariable **vars);
 static char*
 S_maybe_unreachable(CFCType *return_type);
 
-int
-CFCPyMethod_can_be_bound(CFCMethod *method) {
-    if (CFCSymbol_private((CFCSymbol*)method)) {
-        return false;
-    }
-
+static int
+S_types_can_be_bound(CFCParamList *param_list, CFCType *return_type) {
     // Test whether parameters can be mapped automatically.
-    CFCParamList  *param_list = CFCMethod_get_param_list(method);
     CFCVariable  **arg_vars   = CFCParamList_get_variables(param_list);
     for (size_t i = 0; arg_vars[i] != NULL; i++) {
         CFCType *type = CFCVariable_get_type(arg_vars[i]);
@@ -69,7 +64,6 @@ CFCPyMethod_can_be_bound(CFCMethod *method) {
     }
 
     // Test whether return type can be mapped automatically.
-    CFCType *return_type = CFCMethod_get_return_type(method);
     if (!CFCType_is_void(return_type)
         && !CFCType_is_object(return_type)
         && !CFCType_is_primitive(return_type)
@@ -78,6 +72,21 @@ CFCPyMethod_can_be_bound(CFCMethod *method) {
     }
 
     return true;
+}
+
+int
+CFCPyMethod_can_be_bound(CFCMethod *method) {
+    if (CFCSymbol_private((CFCSymbol*)method)) {
+        return false;
+    }
+    return S_types_can_be_bound(CFCMethod_get_param_list(method),
+                                CFCMethod_get_return_type(method));
+}
+
+int
+CFCPyMethod_func_can_be_bound(CFCFunction *func) {
+    return S_types_can_be_bound(CFCFunction_get_param_list(func),
+                                CFCFunction_get_return_type(func));
 }
 
 static char*
@@ -460,8 +469,29 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
-S_gen_arg_increfs(CFCMethod *method, int first_tick) {
-    CFCParamList *param_list = CFCMethod_get_param_list(method);
+S_constructor_top(CFCParamList *param_list, CFCClass *klass) {
+    char *error = NULL;
+    const char *class_var = CFCClass_full_class_var(klass);
+    char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
+    if (error) {
+        CFCUtil_die("%s in constructor for %s", error,
+                    CFCClass_get_class_name(klass));
+    }
+    if (!arg_parsing) {
+        return NULL;
+    }
+    char pattern[] =
+        "(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
+        "    PyObject *self = (PyObject*)CFISH_Class_Make_Obj(%s);\n"
+        "%s"
+        ;
+    char *result = CFCUtil_sprintf(pattern, class_var, arg_parsing);
+    FREEMEM(arg_parsing);
+    return result;
+}
+
+char*
+S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
     char *content = CFCUtil_strdup("");
@@ -477,8 +507,7 @@ S_gen_arg_increfs(CFCMethod *method, int first_tick) {
 }
 
 char*
-S_gen_decrefs(CFCMethod *method, int first_tick) {
-    CFCParamList *param_list = CFCMethod_get_param_list(method);
+S_gen_decrefs(CFCParamList *param_list, int first_tick) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
     char *content = CFCUtil_strdup("");
@@ -542,8 +571,29 @@ S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
-S_gen_return_statement(CFCMethod *method) {
-    CFCType *return_type = CFCMethod_get_return_type(method);
+S_gen_constructor_invocation(CFCFunction *init_func, CFCClass *invoker) {
+    CFCParamList *param_list = CFCFunction_get_param_list(init_func);
+    const char *init_func_str = CFCFunction_full_func_sym(init_func);
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    int num_vars = CFCParamList_num_vars(param_list);
+    CFCType *return_type = CFCFunction_get_return_type(init_func);
+
+    char *arg_list = CFCUtil_sprintf("(%s)self", CFCType_to_c(return_type));
+    for (int i = 1; i < num_vars; i++) {
+        const char *var_name = CFCVariable_micro_sym(vars[i]);
+        arg_list = CFCUtil_cat(arg_list, ", arg_", var_name, NULL);
+    }
+    const char pattern[] =
+        "    self = (PyObject*)%s(%s);\n"
+        ;
+    char *content = CFCUtil_sprintf(pattern, init_func_str, arg_list);
+
+    FREEMEM(arg_list);
+    return content;
+}
+
+char*
+S_gen_return_statement(CFCType *return_type) {
     if (CFCType_is_void(return_type)) {
         return CFCUtil_strdup("    Py_RETURN_NONE;\n");
     }
@@ -562,12 +612,14 @@ S_gen_return_statement(CFCMethod *method) {
 
 char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
+    CFCParamList *param_list  = CFCMethod_get_param_list(method);
+    CFCType      *return_type = CFCMethod_get_return_type(method);
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
-    char *increfs    = S_gen_arg_increfs(method, 1);
+    char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *invocation = S_gen_meth_invocation(method, invoker);
-    char *decrefs    = S_gen_decrefs(method, 1);
-    char *ret        = S_gen_return_statement(method);
+    char *decrefs    = S_gen_decrefs(param_list, 1);
+    char *ret        = S_gen_return_statement(return_type);
     char pattern[] =
         "static PyObject*\n"
         "S_%s%s"
@@ -585,6 +637,33 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     FREEMEM(increfs);
     FREEMEM(meth_sym);
     FREEMEM(meth_top);
+    return wrapper;
+}
+
+char*
+CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
+    const char *class_struct = CFCClass_full_struct_sym(invoker);
+    CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
+    CFCType      *return_type = CFCFunction_get_return_type(init_func);
+    char *top        = S_constructor_top(param_list, invoker);
+    char *increfs    = S_gen_arg_increfs(param_list, 1);
+    char *invocation = S_gen_constructor_invocation(init_func, invoker);
+    char *decrefs    = S_gen_decrefs(param_list, 1);
+    char pattern[] =
+        "static PyObject*\n"
+        "S_%s_PY_NEW%s"
+        "%s" // increfs
+        "%s" // invocation
+        "%s" // decrefs
+        "    return self;\n"
+        "}\n"
+        ;
+    char *wrapper = CFCUtil_sprintf(pattern, class_struct, top, increfs,
+                                    invocation, decrefs);
+    FREEMEM(decrefs);
+    FREEMEM(invocation);
+    FREEMEM(increfs);
+    FREEMEM(top);
     return wrapper;
 }
 

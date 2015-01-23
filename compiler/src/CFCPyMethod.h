@@ -21,6 +21,7 @@
 extern "C" {
 #endif
 
+struct CFCFunction;
 struct CFCMethod;
 struct CFCClass;
 
@@ -30,6 +31,9 @@ struct CFCClass;
  */
 int
 CFCPyMethod_can_be_bound(struct CFCMethod *method);
+
+int
+CFCPyMethod_func_can_be_bound(struct CFCFunction *func);
 
 /** Return C code which knows how to call back into Python for this method.  This
  * code is run when a Python subclass has overridden a method in a Clownfish base
@@ -43,6 +47,10 @@ CFCPyMethod_wrapper(struct CFCMethod *method, struct CFCClass *invoker);
 
 char*
 CFCPyMethod_pymethoddef(struct CFCMethod *method, struct CFCClass *invoker);
+
+char*
+CFCPyMethod_constructor_wrapper(struct CFCFunction *init_func,
+                                struct CFCClass *invoker);
 
 #ifdef __cplusplus
 }
