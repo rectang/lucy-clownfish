@@ -26,6 +26,7 @@
 #include "CFCPython.h"
 #include "CFCParcel.h"
 #include "CFCClass.h"
+#include "CFCFunction.h"
 #include "CFCMethod.h"
 #include "CFCHierarchy.h"
 #include "CFCUtil.h"
@@ -452,6 +453,14 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
             continue;
         }
         char *meth_defs = CFCUtil_strdup("");
+
+        // Constructor.
+        CFCFunction *init_func = CFCClass_function(klass, "init");
+        if (init_func && CFCPyMethod_func_can_be_bound(init_func)) {
+            char *wrapper = CFCPyMethod_constructor_wrapper(init_func, klass);
+            bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
+            FREEMEM(wrapper);
+        }
 
         // Instance methods.
         CFCMethod **methods = CFCClass_methods(klass);
