@@ -861,6 +861,27 @@ CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
 
 /******************************* Class *************************************/
 
+void
+CFBind_class_bootstrap_hook1(cfish_Class *self) {
+    PyTypeObject *py_type = S_get_cached_py_type(self);
+
+    if (PyType_HasFeature(py_type, Py_TPFLAGS_READY)) {
+        if (py_type->tp_basicsize != self->obj_alloc_size) {
+            fprintf(stderr, "PyType for %s readied with wrong alloc size\n",
+                    py_type->tp_name),
+            exit(1);
+        }
+    }
+    else {
+        py_type->tp_basicsize = self->obj_alloc_size;
+        if (PyType_Ready(py_type) < 0) {
+            fprintf(stderr, "PyType_Ready failed for %s\n",
+                    py_type->tp_name),
+            exit(1);
+        }
+    }
+}
+
 static PyTypeObject*
 S_get_cached_py_type(cfish_Class *self) {
     PyTypeObject *py_type = (PyTypeObject*)self->host_type;
@@ -877,10 +898,6 @@ S_get_cached_py_type(cfish_Class *self) {
                 // Lost the race to another thread, so get rid of the refcount.
                 Py_DECREF(py_type);
             }
-
-            // FIXME HEINOUS HACK!  We don't know the size of the object until
-            // after bootstrapping.
-            py_type->tp_basicsize = self->obj_alloc_size;
             break;
         }
     }
@@ -895,7 +912,6 @@ S_get_cached_py_type(cfish_Class *self) {
                             "Clownfish class\n");
             exit(1);
         }
-
     }
     return py_type;
 }
