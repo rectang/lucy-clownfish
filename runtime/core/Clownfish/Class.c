@@ -51,6 +51,7 @@ static int32_t
 S_claim_parcel_id(void);
 
 LockFreeRegistry *Class_registry = NULL;
+cfish_Class_bootstrap_hook1_t cfish_Class_bootstrap_hook1 = NULL;
 
 void
 Class_bootstrap(const ClassSpec *specs, size_t num_specs)
@@ -134,6 +135,9 @@ Class_bootstrap(const ClassSpec *specs, size_t num_specs)
         Class *klass = *spec->klass;
 
         Class_Init_Obj_IMP(CLASS, klass);
+        if (cfish_Class_bootstrap_hook1 != NULL) {
+            cfish_Class_bootstrap_hook1(klass);
+        }
     }
 
     /* Now it's safe to call methods.
