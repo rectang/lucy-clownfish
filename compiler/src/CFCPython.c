@@ -462,6 +462,25 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
             FREEMEM(wrapper);
         }
 
+        // Inert functions.
+        CFCFunction **funcs = CFCClass_functions(klass);
+        for (size_t j = 0; funcs[j] != NULL; j++) {
+            CFCFunction *func = funcs[j];
+            if (!CFCPyMethod_func_can_be_bound(func)) {
+                continue;
+            }
+
+            // Add the function wrapper.
+            char *wrapper = CFCPyFunc_inert_wrapper(func, klass);
+            bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
+            FREEMEM(wrapper);
+
+            // Add PyMethodDef entry.
+            char *meth_def = CFCPyFunc_static_pymethoddef(func, klass);
+            meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
+            FREEMEM(meth_def);
+        }
+
         // Instance methods.
         CFCMethod **methods = CFCClass_methods(klass);
         for (size_t j = 0; methods[j] != NULL; j++) {
