@@ -52,6 +52,12 @@ char*
 CFCPyMethod_constructor_wrapper(struct CFCFunction *init_func,
                                 struct CFCClass *invoker);
 
+char*
+CFCPyFunc_inert_wrapper(struct CFCFunction *func, struct CFCClass *invoker);
+
+char*
+CFCPyFunc_static_pymethoddef(struct CFCFunction *func, struct CFCClass *invoker);
+
 #ifdef __cplusplus
 }
 #endif
