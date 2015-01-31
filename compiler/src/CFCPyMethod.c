@@ -61,6 +61,12 @@ S_types_can_be_bound(CFCParamList *param_list, CFCType *return_type) {
         if (!CFCType_is_object(type) && !CFCType_is_primitive(type)) {
             return false;
         }
+
+        // TODO: kill this off after changing ClassSpec so that it doesn't
+        // look like a legit object type (it's just a struct).
+        if (strcmp("cfish_ClassSpec", CFCType_get_specifier(type)) == 0) {
+            return false;
+        }
     }
 
     // Test whether return type can be mapped automatically.
