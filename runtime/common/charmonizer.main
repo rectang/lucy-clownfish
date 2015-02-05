@@ -251,7 +251,6 @@ cfish_MakeFile_new(chaz_CLI *cli) {
     }
     else if (strcmp(chaz_CLI_strval(cli, "host"), "python") == 0) {
         static const char *python_autogen_src_files[] = {
-            "callbacks",
             "cfish_parcel",
             "testcfish_parcel",
             NULL
