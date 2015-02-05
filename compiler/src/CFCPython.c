@@ -482,7 +482,7 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
         }
 
         // Instance methods.
-        CFCMethod **methods = CFCClass_methods(klass);
+        CFCMethod **methods = CFCClass_fresh_methods(klass);
         for (size_t j = 0; methods[j] != NULL; j++) {
             CFCMethod *meth = methods[j];
 
