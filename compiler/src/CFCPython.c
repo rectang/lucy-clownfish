@@ -116,28 +116,11 @@ S_write_hostdefs(CFCPython *self) {
     FREEMEM(content);
 }
 
-static void
-S_write_callbacks(CFCPython *self, CFCParcel *parcel) {
-    // Generate header files declaring callbacks.
-    CFCBindCore *core_binding
-        = CFCBindCore_new(self->hierarchy, self->header, self->footer);
-    CFCBindCore_write_callbacks_h(core_binding);
-    CFCBase_decref((CFCBase*)core_binding);
-
-    CFCClass **ordered = CFCHierarchy_ordered_classes(self->hierarchy);
-    char *h_includes = CFCUtil_strdup("");
+static char*
+S_gen_callbacks(CFCPython *self, CFCParcel *parcel, CFCClass **ordered) {
     char *callbacks  = CFCUtil_strdup("");
 
-    // Pound-includes for generated headers.
-    for (size_t i = 0; ordered[i] != NULL; i++) {
-        CFCClass *klass = ordered[i];
-        const char *include_h = CFCClass_include_h(klass);
-        h_includes = CFCUtil_cat(h_includes, "#include \"", include_h,
-                                   "\"\n", NULL);
-    }
-
     // Generate implementation files containing callback definitions.
-
     for (size_t i = 0; ordered[i] != NULL; i++) {
         CFCClass *klass = ordered[i];
         if (CFCClass_included(klass)
@@ -160,7 +143,6 @@ S_write_callbacks(CFCPython *self, CFCParcel *parcel) {
         }
         FREEMEM(fresh_methods);
     }
-
 
     static const char helpers[] =
         "static PyObject*\n"
@@ -370,29 +352,12 @@ S_write_callbacks(CFCPython *self, CFCParcel *parcel) {
     static const char pattern[] =
         "%s\n"
         "\n"
-        "#include \"stdarg.h\"\n"
-        "#include \"Python.h\"\n"
-        "#include \"CFBind.h\"\n"
-        "%s\n"
-        "\n"
         "%s"
-        "\n"
-        "%s"
-        "\n"
-        "%s";
-    char *content = CFCUtil_sprintf(pattern, self->header, h_includes,
-                                    helpers, callbacks, self->footer);
+        ;
+    char *content = CFCUtil_sprintf(pattern, helpers, callbacks);
 
-    // Write if changed.
-    const char *src_dest = CFCHierarchy_get_source_dest(self->hierarchy);
-    char *filepath = CFCUtil_sprintf("%s" CHY_DIR_SEP "callbacks.c",
-                                     src_dest);
-    CFCUtil_write_if_changed(filepath, content, strlen(content));
-
-    FREEMEM(filepath);
-    FREEMEM(content);
     FREEMEM(callbacks);
-    FREEMEM(ordered);
+    return content;
 }
 
 static char*
@@ -544,7 +509,8 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
 
     CFCClass  **ordered = CFCHierarchy_ordered_classes(self->hierarchy);
     CFCParcel **parcels = CFCParcel_all_parcels();
-    char *type_linkups = S_gen_type_linkups(self, parcel, ordered);
+    char *callbacks          = S_gen_callbacks(self, parcel, ordered);
+    char *type_linkups       = S_gen_type_linkups(self, parcel, ordered);
     char *privacy_defs       = CFCUtil_strdup("");
     char *pound_includes     = CFCUtil_strdup("");
     char *class_bindings     = S_gen_class_bindings(self, parcel, pymod_name, ordered);
@@ -604,6 +570,8 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
         "#include \"CFBind.h\"\n"
         "%s\n"
         "\n"
+        "%s\n" // callbacks
+        "\n"
         "static PyModuleDef module_def = {\n"
         "    PyModuleDef_HEAD_INIT,\n"
         "    \"%s\",\n" // module name
@@ -636,7 +604,7 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
 
     char *content
         = CFCUtil_sprintf(pattern, self->header, privacy_defs, pound_includes,
-                          helper_mod_name, class_bindings, type_linkups,
+                          callbacks, helper_mod_name, class_bindings, type_linkups,
                           last_component, pytype_ready_calls, parcel_boots,
                           module_adds, self->footer);
 
@@ -654,6 +622,7 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
     FREEMEM(pymod_name);
     FREEMEM(pound_includes);
     FREEMEM(type_linkups);
+    FREEMEM(callbacks);
     FREEMEM(ordered);
 }
 
@@ -663,8 +632,13 @@ CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *d
     if (parcel == NULL) {
         CFCUtil_die("Unknown parcel: %s", parcel_name);
     }
+    // Generate header files declaring callbacks.
+    CFCBindCore *core_binding
+        = CFCBindCore_new(self->hierarchy, self->header, self->footer);
+    CFCBindCore_write_callbacks_h(core_binding);
+    CFCBase_decref((CFCBase*)core_binding);
+
     S_write_hostdefs(self);
-    S_write_callbacks(self, parcel);
     S_write_module_file(self, parcel, dest);
 }
 
