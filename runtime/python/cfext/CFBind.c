@@ -873,6 +873,9 @@ CFBind_class_bootstrap_hook1(cfish_Class *self) {
         }
     }
     else {
+        if (self->parent) {
+            py_type->tp_base = S_get_cached_py_type(self->parent);
+        }
         py_type->tp_basicsize = self->obj_alloc_size;
         if (PyType_Ready(py_type) < 0) {
             fprintf(stderr, "PyType_Ready failed for %s\n",
