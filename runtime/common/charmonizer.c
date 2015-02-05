@@ -8185,7 +8185,6 @@ cfish_MakeFile_new(chaz_CLI *cli) {
     }
     else if (chaz_CLI_defined(cli, "enable-python")) {
         static const char *python_autogen_src_files[] = {
-            "callbacks",
             "cfish_parcel",
             "testcfish_parcel",
             NULL
