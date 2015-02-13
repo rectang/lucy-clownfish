@@ -114,6 +114,95 @@ S_build_py_args(CFCParamList *param_list) {
     return py_args;
 }
 
+static struct {
+    const char *key;
+    const char *value;
+} run_trapped_primitive_map[] = {
+    {"int8_t", "CFBIND_RUN_TRAPPED_int8_t"},
+    {"int16_t", "CFBIND_RUN_TRAPPED_int16_t"},
+    {"int32_t", "CFBIND_RUN_TRAPPED_int32_t"},
+    {"int64_t", "CFBIND_RUN_TRAPPED_int64_t"},
+    {"uint8_t", "CFBIND_RUN_TRAPPED_uint8_t"},
+    {"uint16_t", "CFBIND_RUN_TRAPPED_uint16_t"},
+    {"uint32_t", "CFBIND_RUN_TRAPPED_uint32_t"},
+    {"uint64_t", "CFBIND_RUN_TRAPPED_uint64_t"},
+    {"char", "CFBIND_RUN_TRAPPED_char"},
+    {"short", "CFBIND_RUN_TRAPPED_short"},
+    {"int", "CFBIND_RUN_TRAPPED_int"},
+    {"long", "CFBIND_RUN_TRAPPED_long"},
+    {"size_t", "CFBIND_RUN_TRAPPED_size_t"},
+    {"bool", "CFBIND_RUN_TRAPPED_bool"},
+    {"float", "CFBIND_RUN_TRAPPED_float"},
+    {"double", "CFBIND_RUN_TRAPPED_double"},
+    {NULL, NULL}
+};
+
+static const char*
+S_choose_run_trapped(CFCType *return_type) {
+    if (CFCType_is_void(return_type)) {
+        return "CFBIND_RUN_TRAPPED_void";
+    }
+    else if (CFCType_incremented(return_type)) {
+        return "CFBIND_RUN_TRAPPED_inc_obj";
+    }
+    else if (CFCType_is_object(return_type)) {
+        return "CFBIND_RUN_TRAPPED_obj";
+    }
+    else if (CFCType_is_primitive(return_type)) {
+        const char *specifier = CFCType_get_specifier(return_type);
+        for (int i = 0; run_trapped_primitive_map[i].key != NULL; i++) {
+            if (strcmp(run_trapped_primitive_map[i].key, specifier) == 0) {
+                return run_trapped_primitive_map[i].value;
+            }
+        }
+    }
+
+    CFCUtil_die("Unexpected return type: %s",
+                CFCType_to_c(return_type));
+    return NULL; // Unreachable
+}
+
+static struct {
+    const char *key;
+    const char *value;
+} any_t_member_map[] = {
+    {"int8_t", "int8_t_"},
+    {"int16_t", "int16_t_"},
+    {"int32_t", "int32_t_"},
+    {"int64_t", "int64_t_"},
+    {"uint8_t", "uint8_t_"},
+    {"uint16_t", "uint16_t_"},
+    {"uint32_t", "uint32_t_"},
+    {"uint64_t", "uint64_t_"},
+    {"char", "char_"},
+    {"short", "short_"},
+    {"int", "int_"},
+    {"long", "long_"},
+    {"size_t", "size_t_"},
+    {"bool", "bool_"},
+    {"float", "float_"},
+    {"double", "double_"},
+    {NULL, NULL}
+};
+
+static const char*
+S_choose_any_t(CFCType *type) {
+    if (CFCType_is_object(type)) {
+        return "ptr";
+    }
+    else if (CFCType_is_primitive(type)) {
+        const char *specifier = CFCType_get_specifier(type);
+        for (int i = 0; any_t_member_map[i].key != NULL; i++) {
+            if (strcmp(any_t_member_map[i].key, specifier) == 0) {
+                return any_t_member_map[i].value;
+            }
+        }
+    }
+    CFCUtil_die("Unexpected return type: %s",
+                CFCType_to_c(type));
+    return NULL; // Unreachable
+}
+
 static char*
 S_gen_declaration(CFCVariable *var, const char *val) {
     CFCType *type = CFCVariable_get_type(var);
@@ -431,6 +520,87 @@ S_maybe_unreachable(CFCType *return_type) {
     return return_statement;
 }
 
+// Prep any decrefs for running inside `CFBind_run_trapped`.
+char*
+S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    int num_vars = CFCParamList_num_vars(param_list);
+    int num_decrefs = 0;
+    char *decrefs = CFCUtil_strdup("");
+
+    for (int i = first_tick; i < num_vars; i++) {
+        CFCVariable *var = vars[i];
+        CFCType *type = CFCVariable_get_type(var);
+        const char *micro_sym = CFCVariable_micro_sym(var);
+        const char *specifier = CFCType_get_specifier(type);
+
+        const char *pattern;
+        if (strcmp(specifier, "cfish_String") == 0) {
+            pattern = "%s    decrefs[%d].ptr = wrap_arg_%s.stringified;\n";
+        }
+        else if (strcmp(specifier, "cfish_Hash") == 0
+                 || strcmp(specifier, "cfish_VArray") == 0
+           ) {
+            pattern = "%s    decrefs[%d].ptr = arg_%s;\n";
+        }
+        else {
+            continue;
+        }
+        char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs,
+                                     micro_sym);
+        FREEMEM(decrefs);
+        decrefs = temp;
+        num_decrefs++;
+    }
+
+    if (num_decrefs) {
+        char pattern[] =
+            "    cfbind_any_t decrefs[%d];\n"
+            "    context.decrefs = decrefs;\n"
+            "%s"
+            ;
+        char *temp = CFCUtil_sprintf(pattern, num_decrefs, decrefs);
+        FREEMEM(decrefs);
+        decrefs = temp;
+    }
+
+    return decrefs;
+}
+
+char*
+S_trap_context(CFCParamList *param_list, int first_tick) {
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    int num_vars = CFCParamList_num_vars(param_list);
+    char *content;
+
+    if (num_vars) {
+        char pattern[] =
+            "    CFBindTrapContext context = {{0}};\n"
+            "    cfbind_any_t cfargs[%d] = {{0}};\n"
+            "    context.args = cfargs;\n"
+            ;
+        content = CFCUtil_sprintf(pattern, num_vars);
+    }
+    else {
+        content = CFCUtil_strdup("    CFBindTrapContext context = {{0}};\n");
+    }
+
+    for (int i = first_tick; i < num_vars; i++) {
+        CFCVariable *var = vars[i];
+        CFCType *type = CFCVariable_get_type(var);
+        const char *micro_sym = CFCVariable_micro_sym(var);
+        const char *any_t_member = S_choose_any_t(type);
+
+        char pattern[] = "%s    cfargs[%d].%s = arg_%s;\n";
+        char *temp = CFCUtil_sprintf(pattern, content, i, any_t_member,
+                                     micro_sym);
+        FREEMEM(content);
+        content = temp;
+    }
+
+    return content;
+}
+
 char*
 S_meth_top(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list = CFCMethod_get_param_list(method);
@@ -571,35 +741,65 @@ S_gen_decrefs(CFCParamList *param_list, int first_tick) {
 }
 
 char*
-S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
-    CFCParamList *param_list = CFCMethod_get_param_list(method);
+S_gen_trap_arg_list(CFCParamList *param_list) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
+    char *arg_list = CFCUtil_strdup("");
+    for (int i = 0; i < num_vars; i++) {
+        if (i > 0) {
+            arg_list = CFCUtil_cat(arg_list, ", ", NULL);
+        }
+        CFCType *type = CFCVariable_get_type(vars[i]);
+        const char *type_str = CFCType_to_c(type);
+        char *new_arg_list;
+        if (CFCType_is_primitive(type)) {
+            new_arg_list = CFCUtil_sprintf("%scontext->args[%d].%s_",
+                                           arg_list, i, type_str);
+            FREEMEM(arg_list);
+            arg_list = new_arg_list;
+        }
+        else if (CFCType_is_object(type)) {
+            new_arg_list = CFCUtil_sprintf("%s(%s)context->args[%d].ptr",
+                               arg_list, type_str, i);
+            FREEMEM(arg_list);
+            arg_list = new_arg_list;
+        }
+        else {
+            CFCUtil_die("Unexpected type: %s", type_str);
+        }
+    }
+    return arg_list;
+}
 
+char*
+S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
+    CFCParamList *param_list = CFCMethod_get_param_list(method);
     char *meth_type_c = CFCMethod_full_typedef(method, invoker);
     char *full_meth = CFCMethod_full_method_sym(method, invoker);
     const char *class_var = CFCClass_full_class_var(invoker);
+    char *arg_list = S_gen_trap_arg_list(param_list);
 
     CFCType *return_type = CFCMethod_get_return_type(method);
     char *maybe_retval = CFCUtil_strdup("");
-    if (!CFCType_is_void(return_type)) {
-        maybe_retval = CFCUtil_cat(maybe_retval, CFCType_to_c(return_type),
-                                   " retval = ", NULL);
+    if (CFCType_is_void(return_type)) {
+        maybe_retval = CFCUtil_strdup("");
     }
-
-    char *arg_list = CFCUtil_strdup("self");
-    for (int i = 1; i < num_vars; i++) {
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
-        arg_list = CFCUtil_cat(arg_list, ", arg_", var_name, NULL);
+    else {
+        maybe_retval = CFCUtil_sprintf("context->retval.%s = ",
+                                       S_choose_any_t(return_type));
     }
-
 
     const char pattern[] =
+        "static void\n"
+        "S_run_%s(void *vcontext) {\n"
+        "    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;\n"
         "    %s method = CFISH_METHOD_PTR(%s, %s);\n"
         "    %smethod(%s);\n"
+        "}\n"
         ;
-    char *content = CFCUtil_sprintf(pattern, meth_type_c, class_var,
-                                    full_meth, maybe_retval, arg_list);
+    char *content
+        = CFCUtil_sprintf(pattern, full_meth, meth_type_c, class_var,
+                          full_meth, maybe_retval, arg_list);
 
     FREEMEM(arg_list);
     FREEMEM(maybe_retval);
@@ -679,34 +879,38 @@ S_gen_return_statement(CFCType *return_type) {
     }
 }
 
-
 char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
     CFCType      *return_type = CFCMethod_get_return_type(method);
+    char *meth_trap  = S_gen_meth_trap(method, invoker);
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
-    char *invocation = S_gen_meth_invocation(method, invoker);
-    char *decrefs    = S_gen_decrefs(param_list, 1);
-    char *ret        = S_gen_return_statement(return_type);
+    char *context    = S_trap_context(param_list, 1);
+    char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    const char *run_trapped = S_choose_run_trapped(return_type);
+
     char pattern[] =
+        "%s\n"
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
-        "%s" // invocation
+        "%s" // trap context
+        "    cfargs[0].ptr = py_self;\n"
         "%s" // decrefs
-        "%s" // return statement
+        "    return %s(S_run_%s, &context);\n" // return statement
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, meth_sym, meth_top, increfs,
-                                    invocation, decrefs, ret);
-    FREEMEM(ret);
+    char *wrapper = CFCUtil_sprintf(pattern, meth_trap, meth_sym, meth_top,
+                                    increfs, context, decrefs, run_trapped,
+                                    meth_sym);
+    FREEMEM(context);
     FREEMEM(decrefs);
-    FREEMEM(invocation);
     FREEMEM(increfs);
     FREEMEM(meth_sym);
     FREEMEM(meth_top);
+    FREEMEM(meth_trap);
     return wrapper;
 }
 
