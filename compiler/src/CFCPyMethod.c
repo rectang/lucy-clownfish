@@ -831,31 +831,40 @@ S_gen_constructor_invocation(CFCFunction *init_func, CFCClass *invoker) {
 }
 
 char*
-S_gen_static_meth_invocation(CFCFunction *func) {
-    const char *func_sym = CFCFunction_full_func_sym(func);
+S_gen_inert_func_trap(CFCFunction *func) {
     CFCParamList *param_list = CFCFunction_get_param_list(func);
-    CFCVariable **vars = CFCParamList_get_variables(param_list);
-    int num_vars = CFCParamList_num_vars(param_list);
+    const char *func_sym = CFCFunction_full_func_sym(func);
+    char *arg_list = S_gen_trap_arg_list(param_list);
 
     CFCType *return_type = CFCFunction_get_return_type(func);
     char *maybe_retval = CFCUtil_strdup("");
-    if (!CFCType_is_void(return_type)) {
-        maybe_retval = CFCUtil_cat(maybe_retval, CFCType_to_c(return_type),
-                                   " retval = ", NULL);
+    if (CFCType_is_void(return_type)) {
+        maybe_retval = CFCUtil_strdup("");
+    }
+    else {
+        maybe_retval = CFCUtil_sprintf("context->retval.%s = ",
+                                       S_choose_any_t(return_type));
     }
 
-    char *arg_list = CFCUtil_strdup("");
-    for (int i = 0; i < num_vars; i++) {
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
-        if (i > 0) {
-            arg_list = CFCUtil_cat(arg_list, ", ", NULL);
-        }
-        arg_list = CFCUtil_cat(arg_list, "arg_", var_name, NULL);
+    const char *maybe_context;
+    if (CFCType_is_void(return_type) && !CFCParamList_num_vars(param_list)) {
+        maybe_context = "    CFISH_UNUSED_VAR(vcontext);\n";
+
+    }
+    else {
+        maybe_context
+            = "    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;\n";
     }
 
-    const char pattern[] = "    %s%s(%s);\n";
-    char *content
-        = CFCUtil_sprintf(pattern, maybe_retval, func_sym, arg_list);
+    const char pattern[] =
+        "static void\n"
+        "S_run_%s(void *vcontext) {\n"
+        "%s"
+        "    %s%s(%s);\n"
+        "}\n"
+        ;
+    char *content = CFCUtil_sprintf(pattern, func_sym, maybe_context,
+                                    maybe_retval, func_sym, arg_list);
 
     FREEMEM(arg_list);
     FREEMEM(maybe_retval);
@@ -946,27 +955,31 @@ CFCPyFunc_inert_wrapper(CFCFunction *func, struct CFCClass *invoker) {
     CFCParamList *param_list  = CFCFunction_get_param_list(func);
     CFCType      *return_type = CFCFunction_get_return_type(func);
     const char   *func_sym    = CFCFunction_full_func_sym(func);
+    char *func_trap  = S_gen_inert_func_trap(func);
     char *top        = S_static_meth_top(func);
     char *increfs    = S_gen_arg_increfs(param_list, 0);
-    char *invocation = S_gen_static_meth_invocation(func);
-    char *decrefs    = S_gen_decrefs(param_list, 0);
-    char *ret        = S_gen_return_statement(return_type);
+    char *context    = S_trap_context(param_list, 0);
+    char *decrefs    = S_gen_trap_decrefs(param_list, 0);
+    const char *run_trapped = S_choose_run_trapped(return_type);
+
     char pattern[] =
+        "%s\n" // trap func
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
-        "%s" // invocation
+        "%s" // context
         "%s" // decrefs
-        "%s" // return statement
+        "    return %s(S_run_%s, &context);\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, func_sym, top, increfs,
-                                    invocation, decrefs, ret);
-    FREEMEM(ret);
+    char *wrapper = CFCUtil_sprintf(pattern, func_trap, func_sym, top,
+                                    increfs, context, decrefs, run_trapped,
+                                    func_sym);
+    FREEMEM(context);
     FREEMEM(decrefs);
-    FREEMEM(invocation);
     FREEMEM(increfs);
     FREEMEM(top);
+    FREEMEM(func_trap);
     return wrapper;
 }
 
