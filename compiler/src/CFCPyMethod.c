@@ -645,28 +645,6 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
-S_constructor_top(CFCParamList *param_list, CFCClass *klass) {
-    char *error = NULL;
-    const char *class_var = CFCClass_full_class_var(klass);
-    char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
-    if (error) {
-        CFCUtil_die("%s in constructor for %s", error,
-                    CFCClass_get_class_name(klass));
-    }
-    if (!arg_parsing) {
-        return NULL;
-    }
-    char pattern[] =
-        "(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
-        "    PyObject *self = (PyObject*)CFISH_Class_Make_Obj(%s);\n"
-        "%s"
-        ;
-    char *result = CFCUtil_sprintf(pattern, class_var, arg_parsing);
-    FREEMEM(arg_parsing);
-    return result;
-}
-
-char*
 S_static_meth_top(CFCFunction *func) {
     CFCParamList *param_list = CFCFunction_get_param_list(func);
 
@@ -809,22 +787,20 @@ S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
-S_gen_constructor_invocation(CFCFunction *init_func, CFCClass *invoker) {
+S_gen_constructor_trap(CFCFunction *init_func) {
     CFCParamList *param_list = CFCFunction_get_param_list(init_func);
     const char *init_func_str = CFCFunction_full_func_sym(init_func);
-    CFCVariable **vars = CFCParamList_get_variables(param_list);
-    int num_vars = CFCParamList_num_vars(param_list);
-    CFCType *return_type = CFCFunction_get_return_type(init_func);
+    char *arg_list = S_gen_trap_arg_list(param_list);
 
-    char *arg_list = CFCUtil_sprintf("(%s)self", CFCType_to_c(return_type));
-    for (int i = 1; i < num_vars; i++) {
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
-        arg_list = CFCUtil_cat(arg_list, ", arg_", var_name, NULL);
-    }
     const char pattern[] =
-        "    self = (PyObject*)%s(%s);\n"
+        "static void\n"
+        "S_run_%s_AS_NEW(void *vcontext) {\n"
+        "    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;\n"
+        "    context->retval.ptr = %s(%s);\n"
+        "}\n"
         ;
-    char *content = CFCUtil_sprintf(pattern, init_func_str, arg_list);
+    char *content = CFCUtil_sprintf(pattern, init_func_str, init_func_str,
+                                    arg_list);
 
     FREEMEM(arg_list);
     return content;
@@ -925,28 +901,45 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
 
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
-    const char *class_struct = CFCClass_full_struct_sym(invoker);
     CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
-    CFCType      *return_type = CFCFunction_get_return_type(init_func);
-    char *top        = S_constructor_top(param_list, invoker);
+    char *trap_wrap  = S_gen_constructor_trap(init_func);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
-    char *invocation = S_gen_constructor_invocation(init_func, invoker);
-    char *decrefs    = S_gen_decrefs(param_list, 1);
+    char *context    = S_trap_context(param_list, 1);
+    char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    const char *class_var  = CFCClass_full_class_var(invoker);
+    const char *struct_sym = CFCClass_full_struct_sym(invoker);
+    const char *func_name  = CFCFunction_full_func_sym(init_func);
+    char *error = NULL;
+    char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
+    if (error) {
+        CFCUtil_die("%s in constructor for %s", error,
+                    CFCClass_get_class_name(invoker));
+    }
+    if (!arg_parsing) {
+        CFCUtil_die("Unexpected arg parsing error for %s",
+                    CFCClass_get_class_name(invoker));
+    }
+
     char pattern[] =
+        "%s\n" // trap_wrap
         "static PyObject*\n"
-        "S_%s_PY_NEW%s"
+        "S_%s_PY_NEW(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
+        "%s" // arg_parsing
         "%s" // increfs
-        "%s" // invocation
+        "%s" // context
+        "    context.args[0].ptr = CFISH_Class_Make_Obj(%s);\n"
         "%s" // decrefs
-        "    return self;\n"
+        "    return CFBIND_RUN_TRAPPED_raw_obj(S_run_%s_AS_NEW, &context);\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, class_struct, top, increfs,
-                                    invocation, decrefs);
+    char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym,
+                                    arg_parsing, increfs, context, class_var,
+                                    decrefs, func_name);
     FREEMEM(decrefs);
-    FREEMEM(invocation);
+    FREEMEM(context);
     FREEMEM(increfs);
-    FREEMEM(top);
+    FREEMEM(arg_parsing);
+    FREEMEM(trap_wrap);
     return wrapper;
 }
 
