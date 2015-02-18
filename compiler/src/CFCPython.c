@@ -417,6 +417,13 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
         if (CFCClass_included(klass)) {
             continue;
         }
+        const char *class_name = CFCClass_get_class_name(klass);
+        CFCPyClass *class_binding = CFCPyClass_singleton(class_name);
+        if (!class_binding) {
+            // No binding spec'd out, so create one using defaults.
+            class_binding = CFCPyClass_new(parcel, class_name);
+            CFCPyClass_add_to_registry(class_binding);
+        }
         char *meth_defs = CFCUtil_strdup("");
 
         // Constructor.
@@ -485,7 +492,6 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
         char *struct_def = CFCPyClass_pytype_struct_def(klass, pymod_name);
         bindings = CFCUtil_cat(bindings, struct_def, NULL);
         FREEMEM(struct_def);
-
     }
     return bindings;
 }
