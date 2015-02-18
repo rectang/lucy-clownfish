@@ -28,6 +28,7 @@
 #include "CFCUtil.h"
 #include "CFCClass.h"
 #include "CFCFunction.h"
+#include "CFCMethod.h"
 #include "CFCPyMethod.h"
 
 struct CFCPyClass {
@@ -36,6 +37,9 @@ struct CFCPyClass {
     char *class_name;
     CFCClass *client;
 };
+
+static char*
+S_pytype_struct_def(CFCPyClass *self);
 
 static CFCPyClass **registry = NULL;
 static size_t registry_size = 0;
@@ -48,14 +52,12 @@ static const CFCMeta CFCPERLCLASS_META = {
 };
 
 CFCPyClass*
-CFCPyClass_new(CFCParcel *parcel, const char *class_name) {
-    CFCUTIL_NULL_CHECK(parcel);
-    CFCUTIL_NULL_CHECK(class_name);
+CFCPyClass_new(CFCClass *client) {
+    CFCUTIL_NULL_CHECK(client);
     CFCPyClass *self = (CFCPyClass*)CFCBase_allocate(&CFCPERLCLASS_META);
+    CFCParcel *parcel = CFCClass_get_parcel(client);
     self->parcel = (CFCParcel*)CFCBase_incref((CFCBase*)parcel);
-    self->class_name = CFCUtil_strdup(class_name);
-    // Client may be NULL, since fetch_singleton() does not always succeed.
-    CFCClass *client = CFCClass_fetch_singleton(parcel, class_name);
+    self->class_name = CFCUtil_strdup(CFCClass_get_class_name(client));
     self->client = (CFCClass*)CFCBase_incref((CFCBase*)client);
     return self;
 }
@@ -128,7 +130,95 @@ CFCPyClass_clear_registry(void) {
 }
 
 char*
-CFCPyClass_pytype_struct_def(CFCClass *klass, const char *pymod_name) {
+CFCPyClass_gen_binding_code(CFCPyClass *self) {
+    if (!self->client) {
+        CFCUtil_die("No Clownfish class defined for %s", self->class_name);
+    }
+    CFCClass *klass = self->client;
+    char *bindings  = CFCUtil_strdup("");
+    char *meth_defs = CFCUtil_strdup("");
+
+    // Constructor.
+    CFCFunction *init_func = CFCClass_function(klass, "init");
+    if (init_func && CFCPyMethod_func_can_be_bound(init_func)) {
+        char *wrapper = CFCPyMethod_constructor_wrapper(init_func, klass);
+        bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
+        FREEMEM(wrapper);
+    }
+
+    // Inert functions.
+    CFCFunction **funcs = CFCClass_functions(klass);
+    for (size_t j = 0; funcs[j] != NULL; j++) {
+        CFCFunction *func = funcs[j];
+        if (!CFCPyMethod_func_can_be_bound(func)) {
+            continue;
+        }
+
+        // Add the function wrapper.
+        char *wrapper = CFCPyFunc_inert_wrapper(func, klass);
+        bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
+        FREEMEM(wrapper);
+
+        // Add PyMethodDef entry.
+        char *meth_def = CFCPyFunc_static_pymethoddef(func, klass);
+        meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
+        FREEMEM(meth_def);
+    }
+
+    // Instance methods.
+    CFCMethod **methods = CFCClass_fresh_methods(klass);
+    for (size_t j = 0; methods[j] != NULL; j++) {
+        CFCMethod *meth = methods[j];
+
+        if (!CFCPyMethod_can_be_bound(meth)) {
+            continue;
+        }
+
+        // Add the function wrapper.
+        char *wrapper = CFCPyMethod_wrapper(meth, klass);
+        bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
+        FREEMEM(wrapper);
+
+        // Add PyMethodDef entry.
+        char *meth_def = CFCPyMethod_pymethoddef(meth, klass);
+        meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
+        FREEMEM(meth_def);
+    }
+    FREEMEM(methods);
+
+    // Complete the PyMethodDef array.
+    const char *struct_sym = CFCClass_get_struct_sym(klass);
+    char *meth_defs_pattern =
+        "static PyMethodDef %s_pymethods[] = {\n"
+        "%s"
+        "   {NULL}\n"
+        "};\n"
+        ;
+    char *meth_defs_array = CFCUtil_sprintf(meth_defs_pattern, struct_sym,
+                                            meth_defs);
+    bindings = CFCUtil_cat(bindings, meth_defs_array, NULL);
+    FREEMEM(meth_defs_array);
+    FREEMEM(meth_defs);
+
+    // PyTypeObject struct def.
+    char *struct_def = S_pytype_struct_def(self);
+    bindings = CFCUtil_cat(bindings, struct_def, NULL);
+    FREEMEM(struct_def);
+
+    return bindings;
+}
+
+
+static char*
+S_pytype_struct_def(CFCPyClass *self) {
+    CFCClass *klass = self->client;
+    const char *parcel_name = CFCParcel_get_name(self->parcel);
+    char *pymod_name = CFCUtil_strdup(parcel_name);
+    // TODO: Stop lowercasing when parcels are restricted to lowercase.
+    for (int i = 0; pymod_name[i] != '\0'; i++) {
+        pymod_name[i] = tolower(pymod_name[i]);
+    }
+
     const char *struct_sym = CFCClass_get_struct_sym(klass);
 
     char *tp_new;
@@ -185,6 +275,8 @@ CFCPyClass_pytype_struct_def(CFCClass *klass, const char *pymod_name) {
         ;
     char *content = CFCUtil_sprintf(pattern, struct_sym, pymod_name,
                                     struct_sym, struct_sym, tp_new);
+
+    FREEMEM(pymod_name);
     return content;
 }
 
