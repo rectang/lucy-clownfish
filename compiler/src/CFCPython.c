@@ -421,77 +421,13 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
         CFCPyClass *class_binding = CFCPyClass_singleton(class_name);
         if (!class_binding) {
             // No binding spec'd out, so create one using defaults.
-            class_binding = CFCPyClass_new(parcel, class_name);
+            class_binding = CFCPyClass_new(klass);
             CFCPyClass_add_to_registry(class_binding);
         }
-        char *meth_defs = CFCUtil_strdup("");
 
-        // Constructor.
-        CFCFunction *init_func = CFCClass_function(klass, "init");
-        if (init_func && CFCPyMethod_func_can_be_bound(init_func)) {
-            char *wrapper = CFCPyMethod_constructor_wrapper(init_func, klass);
-            bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
-            FREEMEM(wrapper);
-        }
-
-        // Inert functions.
-        CFCFunction **funcs = CFCClass_functions(klass);
-        for (size_t j = 0; funcs[j] != NULL; j++) {
-            CFCFunction *func = funcs[j];
-            if (!CFCPyMethod_func_can_be_bound(func)) {
-                continue;
-            }
-
-            // Add the function wrapper.
-            char *wrapper = CFCPyFunc_inert_wrapper(func, klass);
-            bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
-            FREEMEM(wrapper);
-
-            // Add PyMethodDef entry.
-            char *meth_def = CFCPyFunc_static_pymethoddef(func, klass);
-            meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
-            FREEMEM(meth_def);
-        }
-
-        // Instance methods.
-        CFCMethod **methods = CFCClass_fresh_methods(klass);
-        for (size_t j = 0; methods[j] != NULL; j++) {
-            CFCMethod *meth = methods[j];
-
-            if (!CFCPyMethod_can_be_bound(meth)) {
-                continue;
-            }
-
-            // Add the function wrapper.
-            char *wrapper = CFCPyMethod_wrapper(meth, klass);
-            bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
-            FREEMEM(wrapper);
-
-            // Add PyMethodDef entry.
-            char *meth_def = CFCPyMethod_pymethoddef(meth, klass);
-            meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
-            FREEMEM(meth_def);
-        }
-        FREEMEM(methods);
-
-        // Complete the PyMethodDef array.
-        const char *struct_sym = CFCClass_get_struct_sym(klass);
-        char *meth_defs_pattern =
-            "static PyMethodDef %s_pymethods[] = {\n"
-            "%s"
-            "   {NULL}\n"
-            "};\n"
-            ;
-        char *meth_defs_array = CFCUtil_sprintf(meth_defs_pattern, struct_sym,
-                                                meth_defs);
-        bindings = CFCUtil_cat(bindings, meth_defs_array, NULL);
-        FREEMEM(meth_defs_array);
-        FREEMEM(meth_defs);
-
-        // PyTypeObject struct def.
-        char *struct_def = CFCPyClass_pytype_struct_def(klass, pymod_name);
-        bindings = CFCUtil_cat(bindings, struct_def, NULL);
-        FREEMEM(struct_def);
+        char *code = CFCPyClass_gen_binding_code(class_binding);
+        bindings = CFCUtil_cat(bindings, code, NULL);
+        FREEMEM(code);
     }
     return bindings;
 }

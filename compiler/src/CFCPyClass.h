@@ -29,16 +29,8 @@ struct CFCClass;
  * Clownfish::CFC::Model::Class.
  */
 
-/**
- * @param parcel A Clownfish::CFC::Model::Parcel.
- * @param class_name The name of the class to be registered.
- */
 CFCPyClass*
-CFCPyClass_new(struct CFCParcel *parcel, const char *class_name);
-
-CFCPyClass*
-CFCPyClass_init(CFCPyClass *self, struct CFCParcel *parcel,
-                const char *class_name);
+CFCPyClass_new(struct CFCClass *client);
 
 void
 CFCPyClass_destroy(CFCPyClass *self);
@@ -65,7 +57,7 @@ void
 CFCPyClass_clear_registry(void);
 
 char*
-CFCPyClass_pytype_struct_def(struct CFCClass *klass, const char *pymod_name);
+CFCPyClass_gen_binding_code(CFCPyClass *self);
 
 #ifdef __cplusplus
 }
