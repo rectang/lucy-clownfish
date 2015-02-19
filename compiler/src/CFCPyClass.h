@@ -59,6 +59,16 @@ CFCPyClass_clear_registry(void);
 char*
 CFCPyClass_gen_binding_code(CFCPyClass *self);
 
+void
+CFCPyClass_spec_method(CFCPyClass *self, const char *name,
+                       const char *py_method_def);
+
+void
+CFCPyClass_exclude_method(CFCPyClass *self, const char *name);
+
+void
+CFCPyClass_set_pre_code(CFCPyClass *self, const char *code);
+
 #ifdef __cplusplus
 }
 #endif

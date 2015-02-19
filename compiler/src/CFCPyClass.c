@@ -36,6 +36,9 @@ struct CFCPyClass {
     CFCParcel *parcel;
     char *class_name;
     CFCClass *client;
+    char *pre_code;
+    CFCPyMethod **custom_meths;
+    int num_custom_meths;
 };
 
 static char*
@@ -46,7 +49,7 @@ static size_t registry_size = 0;
 static size_t registry_cap  = 0;
 
 static const CFCMeta CFCPERLCLASS_META = {
-    "Clownfish::CFC::Binding::Perl::Class",
+    "Clownfish::CFC::Binding::Python::Class",
     sizeof(CFCPyClass),
     (CFCBase_destroy_t)CFCPyClass_destroy
 };
@@ -59,6 +62,9 @@ CFCPyClass_new(CFCClass *client) {
     self->parcel = (CFCParcel*)CFCBase_incref((CFCBase*)parcel);
     self->class_name = CFCUtil_strdup(CFCClass_get_class_name(client));
     self->client = (CFCClass*)CFCBase_incref((CFCBase*)client);
+    self->pre_code = NULL;
+    self->num_custom_meths = 0;
+    self->custom_meths = (CFCPyMethod**)CALLOCATE(1, sizeof(CFCPyMethod*));
     return self;
 }
 
@@ -67,6 +73,11 @@ CFCPyClass_destroy(CFCPyClass *self) {
     CFCBase_decref((CFCBase*)self->parcel);
     CFCBase_decref((CFCBase*)self->client);
     FREEMEM(self->class_name);
+    FREEMEM(self->pre_code);
+    for (int i = 0, max = self->num_custom_meths; i < max; i++) {
+        CFCBase_decref((CFCBase*)self->custom_meths[i]);
+    }
+    FREEMEM(self->custom_meths);
     CFCBase_destroy((CFCBase*)self);
 }
 
@@ -135,7 +146,7 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
         CFCUtil_die("No Clownfish class defined for %s", self->class_name);
     }
     CFCClass *klass = self->client;
-    char *bindings  = CFCUtil_strdup("");
+    char *bindings  = CFCUtil_strdup(self->pre_code ? self->pre_code : "");
     char *meth_defs = CFCUtil_strdup("");
 
     // Constructor.
@@ -170,7 +181,9 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
     for (size_t j = 0; methods[j] != NULL; j++) {
         CFCMethod *meth = methods[j];
 
-        if (!CFCPyMethod_can_be_bound(meth)) {
+        if (CFCMethod_excluded_from_host(meth)
+            || !CFCPyMethod_can_be_bound(meth)
+           ) {
             continue;
         }
 
@@ -185,6 +198,12 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
         FREEMEM(meth_def);
     }
     FREEMEM(methods);
+    CFCPyMethod **custom_meths = self->custom_meths;
+    for (size_t j = 0; custom_meths[j] != NULL; j++) {
+        // Add PyMethodDef entry.
+        const char *meth_def = CFCPyMethod_get_py_method_def(custom_meths[j]);
+        meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, ",\n", NULL);
+    }
 
     // Complete the PyMethodDef array.
     const char *struct_sym = CFCClass_get_struct_sym(klass);
@@ -208,6 +227,41 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
     return bindings;
 }
 
+void
+CFCPyClass_set_pre_code(CFCPyClass *self, const char *code) {
+    CFCUTIL_NULL_CHECK(code);
+    FREEMEM(self->pre_code);
+    self->pre_code = CFCUtil_strdup(code);
+}
+
+void
+CFCPyClass_spec_method(CFCPyClass *self, const char *name,
+                       const char *py_method_def) {
+    CFCPyMethod *meth_binding = CFCPyMethod_new(name, py_method_def);
+    size_t size = (self->num_custom_meths + 2) * sizeof(CFCPyMethod*);
+    self->custom_meths = (CFCPyMethod**)REALLOCATE(self->custom_meths, size);
+    self->custom_meths[self->num_custom_meths] = meth_binding;
+    self->num_custom_meths++;
+    self->custom_meths[self->num_custom_meths] = NULL;
+}
+
+void
+CFCPyClass_exclude_method(CFCPyClass *self, const char *name) {
+    if (!self->client) {
+        CFCUtil_die("Can't exclude_method %s -- can't find client for %s",
+                    name, self->class_name);
+    }
+    CFCMethod *method = CFCClass_method(self->client, name);
+    if (!method) {
+        CFCUtil_die("Can't exclude_method %s -- method not found in %s",
+                    name, self->class_name);
+    }
+    if (strcmp(CFCMethod_get_class_name(method), self->class_name) != 0) {
+        CFCUtil_die("Can't exclude_method %s -- method not fresh in %s",
+                    name, self->class_name);
+    }
+    CFCMethod_exclude_from_host(method);
+}
 
 static char*
 S_pytype_struct_def(CFCPyClass *self) {
