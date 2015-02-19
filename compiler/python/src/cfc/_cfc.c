@@ -46,9 +46,18 @@ static PyModuleDef cfc_binding_module_def = {
     NULL, NULL, NULL, NULL, NULL
 };
 
+static PyModuleDef cfc_python_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cfc.binding.python",
+    "CFC components which generate Python bindings",
+    -1,
+    NULL, NULL, NULL, NULL, NULL
+};
+
 static PyObject *cfc_module;
 static PyObject *cfc_model_module;
 static PyObject *cfc_binding_module;
+static PyObject *cfc_python_module;
 
 static PyObject*
 S_wrap_cfcbase(PyTypeObject *type, void *cfc_obj) {
@@ -97,6 +106,12 @@ S_to_Parcel(PyObject *wrapper) {
         "Clownfish::CFC::Model::Parcel");
 }
 
+static CFCClass*
+S_to_Class(PyObject *wrapper) {
+    return (CFCClass*)S_to_cfc_something(wrapper,
+        "Clownfish::CFC::Model::Class");
+}
+
 static CFCBindCore*
 S_to_BindCore(PyObject *wrapper) {
     return (CFCBindCore*)S_to_cfc_something(wrapper,
@@ -109,10 +124,18 @@ S_to_BindPython(PyObject *wrapper) {
         "Clownfish::CFC::Binding::Python");
 }
 
+static CFCPyClass*
+S_to_PyClass(PyObject *wrapper) {
+    return (CFCPyClass*)S_to_cfc_something(wrapper,
+        "Clownfish::CFC::Binding::Python::Class");
+}
+
 static PyTypeObject *Hierarchy_pytype;
 static PyTypeObject *Parcel_pytype;
+static PyTypeObject *Class_pytype;
 static PyTypeObject *BindCore_pytype;
 static PyTypeObject *BindPython_pytype;
+static PyTypeObject *PyClass_pytype;
 
 /***************************** CFCHierarchy *****************************/
 
@@ -297,6 +320,72 @@ static PyTypeObject Parcel_pytype_struct = {
     0                                   // tp_new
 };
 
+/***************************** CFCClass *****************************/
+
+static PyObject*
+S_CFCClass_fetch_singleton(PyObject *unused, PyObject *args,
+                           PyObject *kwargs) {
+    CHY_UNUSED_VAR(unused);
+    char *parcel_name;
+    char *class_name;
+    char *keywords[] = {"parcel", "class_name", NULL};
+    int result = PyArg_ParseTupleAndKeywords(args, kwargs, "ss", keywords,
+                                             &parcel_name, &class_name);
+    if (!result) { return NULL; }
+    CFCParcel *parcel = CFCParcel_fetch(parcel_name);
+    if (!parcel) {
+        return NULL;
+    }
+    CFCClass *singleton = CFCClass_fetch_singleton(parcel, class_name);
+    return S_wrap_cfcbase(Class_pytype, singleton);
+}
+
+static PyMethodDef cfcclass_methods[] = {
+    {"fetch_singleton", (PyCFunction)S_CFCClass_fetch_singleton, METH_STATIC|METH_KEYWORDS|METH_VARARGS, NULL},
+    {NULL}
+};
+
+static PyTypeObject Class_pytype_struct = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "cfc.model.Class",                  // tp_name
+    sizeof(CFCPyWrapper),               // tp_basicsize
+    0,                                  // tp_itemsize
+    (destructor)S_CFCBase_dealloc,      // tp_dealloc
+    0,                                  // tp_print
+    0,                                  // tp_getattr
+    0,                                  // tp_setattr
+    0,                                  // tp_reserved
+    0,                                  // tp_repr
+    0,                                  // tp_as_number
+    0,                                  // tp_as_sequence
+    0,                                  // tp_as_mapping
+    0,                                  // tp_hash
+    0,                                  // tp_call
+    0,                                  // tp_str
+    0,                                  // tp_getattro
+    0,                                  // tp_setattro
+    0,                                  // tp_as_buffer
+    Py_TPFLAGS_DEFAULT,                 // tp_flags
+    "CFCClass",                         // tp_doc
+    0,                                  // tp_traverse
+    0,                                  // tp_clear
+    0,                                  // tp_richcompare
+    0,                                  // tp_weaklistoffset
+    0,                                  // tp_iter
+    0,                                  // tp_iternext
+    cfcclass_methods,                   // tp_methods
+    0,                                  // tp_members
+    0,                                  // tp_getset
+    0,                                  // tp_base
+    0,                                  // tp_dict
+    0,                                  // tp_descr_get
+    0,                                  // tp_descr_set
+    0,                                  // tp_dictoffset
+    0,                                  // tp_init
+    0,                                  // tp_allow
+    0,                                  // tp_new
+};
+
 /***************************** CFCBindCore *****************************/
 
 static PyObject*
@@ -464,6 +553,112 @@ static PyTypeObject BindPython_pytype_struct = {
     (newfunc)S_CFCPython_new            // tp_new
 };
 
+/***************************** CFCPyClass *****************************/
+
+static PyObject*
+S_CFCPyClass_new(PyTypeObject *type, PyObject *args, PyObject *keyword_args) {
+    PyObject *client_wrapped;
+    char *keywords[] = {"client", NULL};
+    int result = PyArg_ParseTupleAndKeywords(args, keyword_args, "O!",
+                                             keywords, Class_pytype,
+                                             &client_wrapped);
+    if (!result) { return NULL; }
+    CFCClass *client = S_to_Class(client_wrapped);
+    CFCPyClass *obj = CFCPyClass_new(client);
+    return S_wrap_cfcbase(PyClass_pytype, obj);
+}
+
+static PyObject*
+S_CFCPyClass_singleton(PyObject *wrapper, PyObject *class_name) {
+    CFCPyClass *singleton = CFCPyClass_singleton(PyUnicode_AsUTF8(class_name));
+    return S_wrap_cfcbase(PyClass_pytype, singleton);
+}
+
+static PyObject*
+S_CFCPyClass_set_pre_code(PyObject *wrapper, PyObject *code) {
+    CFCPyClass *self = S_to_PyClass(wrapper);
+    CFCPyClass_set_pre_code(self, PyUnicode_AsUTF8(code));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+S_CFCPyClass_spec_method(PyObject *py_self, PyObject *args,
+                         PyObject *kwargs) {
+    char *name;
+    char *py_method_def;
+    char *keywords[] = {"name", "py_method_def", NULL};
+    int result = PyArg_ParseTupleAndKeywords(args, kwargs, "ss", keywords,
+                                             &name, &py_method_def);
+    if (!result) { return NULL; }
+    CFCPyClass_spec_method(S_to_PyClass(py_self), name, py_method_def);
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+S_CFCPyClass_exclude_method(PyObject *wrapper, PyObject *name) {
+    CFCPyClass *self = S_to_PyClass(wrapper);
+    CFCPyClass_exclude_method(self, PyUnicode_AsUTF8(name));
+    Py_RETURN_NONE;
+}
+
+static PyObject*
+S_CFCPyClass_register(PyObject *wrapper, PyObject *unused) {
+    CHY_UNUSED_VAR(unused);
+    CFCPyClass *self = S_to_PyClass(wrapper);
+    CFCPyClass_add_to_registry(self);
+    Py_RETURN_NONE;
+}
+
+static PyMethodDef pyclass_methods[] = {
+    {"singleton",      (PyCFunction)S_CFCPyClass_singleton, METH_STATIC, NULL},
+    {"set_pre_code",   (PyCFunction)S_CFCPyClass_set_pre_code, METH_O, NULL},
+    {"spec_method",    (PyCFunction)S_CFCPyClass_spec_method, METH_KEYWORDS|METH_VARARGS, NULL},
+    {"exclude_method", (PyCFunction)S_CFCPyClass_exclude_method, METH_O, NULL},
+    {"register",       (PyCFunction)S_CFCPyClass_register, METH_NOARGS, NULL},
+    {NULL}
+};
+
+static PyTypeObject PyClass_pytype_struct = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "cfc.binding.python.Class",         // tp_name
+    sizeof(CFCPyWrapper),               // tp_basicsize
+    0,                                  // tp_itemsize
+    (destructor)S_CFCBase_dealloc,      // tp_dealloc
+    0,                                  // tp_print
+    0,                                  // tp_getattr
+    0,                                  // tp_setattr
+    0,                                  // tp_reserved
+    0,                                  // tp_repr
+    0,                                  // tp_as_number
+    0,                                  // tp_as_sequence
+    0,                                  // tp_as_mapping
+    0,                                  // tp_hash
+    0,                                  // tp_call
+    0,                                  // tp_str
+    0,                                  // tp_getattro
+    0,                                  // tp_setattro
+    0,                                  // tp_as_buffer
+    Py_TPFLAGS_DEFAULT,                 // tp_flags
+    "CFCPyClass",                       // tp_doc
+    0,                                  // tp_traverse
+    0,                                  // tp_clear
+    0,                                  // tp_richcompare
+    0,                                  // tp_weaklistoffset
+    0,                                  // tp_iter
+    0,                                  // tp_iternext
+    pyclass_methods,                    // tp_methods
+    0,                                  // tp_members
+    0,                                  // tp_getset
+    0,                                  // tp_base
+    0,                                  // tp_dict
+    0,                                  // tp_descr_get
+    0,                                  // tp_descr_set
+    0,                                  // tp_dictoffset
+    0,                                  // tp_init
+    0,                                  // tp_allow
+    (newfunc)S_CFCPyClass_new           // tp_new
+};
+
 /******************************* common ******************************/
 
 PyMODINIT_FUNC
@@ -471,9 +666,14 @@ PyInit__cfc(void) {
     // Initialize Python type objects.
     Hierarchy_pytype  = &Hierarchy_pytype_struct;
     Parcel_pytype     = &Parcel_pytype_struct;
+    Class_pytype      = &Class_pytype_struct;
     BindCore_pytype   = &BindCore_pytype_struct;
     BindPython_pytype = &BindPython_pytype_struct;
+    PyClass_pytype    = &PyClass_pytype_struct;
     if (PyType_Ready(Hierarchy_pytype) < 0) {
+        return NULL;
+    }
+    if (PyType_Ready(Class_pytype) < 0) {
         return NULL;
     }
     if (PyType_Ready(Parcel_pytype) < 0) {
@@ -485,13 +685,19 @@ PyInit__cfc(void) {
     if (PyType_Ready(BindPython_pytype) < 0) {
         return NULL;
     }
+    if (PyType_Ready(PyClass_pytype) < 0) {
+        return NULL;
+    }
 
     // Initialize modules.
     cfc_module = PyModule_Create(&cfc_module_def);
     cfc_model_module = PyModule_Create(&cfc_model_module_def);
     cfc_binding_module = PyModule_Create(&cfc_binding_module_def);
+    cfc_python_module = PyModule_Create(&cfc_python_module_def);
     PyModule_AddObject(cfc_module, "model", (PyObject*)cfc_model_module);
     PyModule_AddObject(cfc_module, "binding", (PyObject*)cfc_binding_module);
+    PyModule_AddObject(cfc_binding_module, "python",
+                       (PyObject*)cfc_python_module);
 
     // Add type objects to "model" module.
     Py_INCREF(Hierarchy_pytype);
@@ -500,6 +706,9 @@ PyInit__cfc(void) {
     Py_INCREF(Parcel_pytype);
     PyModule_AddObject(cfc_model_module, "Parcel",
                        (PyObject*)Parcel_pytype);
+    Py_INCREF(Parcel_pytype);
+    PyModule_AddObject(cfc_model_module, "Class",
+                       (PyObject*)Class_pytype);
 
     // Add type objects to "binding" module.
     Py_INCREF(BindCore_pytype);
@@ -508,6 +717,11 @@ PyInit__cfc(void) {
     Py_INCREF(BindCore_pytype);
     PyModule_AddObject(cfc_binding_module, "Python",
                        (PyObject*)BindPython_pytype);
+
+    // Add type objects to "cfc.binding.python" module.
+    Py_INCREF(PyClass_pytype);
+    PyModule_AddObject(cfc_python_module, "Class",
+                       (PyObject*)PyClass_pytype);
 
     return cfc_module;
 }
