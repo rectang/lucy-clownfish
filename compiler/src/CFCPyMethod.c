@@ -19,9 +19,10 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#define CFC_NEED_GOFUNC_STRUCT_DEF 1
-#include "CFCGoFunc.h"
-#include "CFCGoMethod.h"
+#define CFC_NEED_BASE_STRUCT_DEF
+
+#include "CFCBase.h"
+#include "CFCPyMethod.h"
 #include "CFCUtil.h"
 #include "CFCClass.h"
 #include "CFCFunction.h"
@@ -78,6 +79,46 @@ S_types_can_be_bound(CFCParamList *param_list, CFCType *return_type) {
     }
 
     return true;
+}
+
+struct CFCPyMethod {
+    CFCBase base;
+    char *name;
+    char *py_method_def;
+};
+
+static const CFCMeta CFCPYMETHOD_META = {
+    "Clownfish::CFC::Binding::Python::Method",
+    sizeof(CFCPyMethod),
+    (CFCBase_destroy_t)CFCPyMethod_destroy
+};
+
+CFCPyMethod*
+CFCPyMethod_new(const char *name, const char *py_method_def) {
+    CFCUTIL_NULL_CHECK(name);
+    CFCUTIL_NULL_CHECK(py_method_def);
+    CFCPyMethod *self = (CFCPyMethod*)CFCBase_allocate(&CFCPYMETHOD_META);
+    self->name = CFCUtil_strdup(name);
+    self->py_method_def = CFCUtil_strdup(py_method_def);
+    return self;
+}
+
+void
+CFCPyMethod_destroy(CFCPyMethod *self) {
+    FREEMEM(self->name);
+    FREEMEM(self->py_method_def);
+    CFCBase_destroy((CFCBase*)self);
+}
+
+const char*
+CFCPyMethod_get_name(CFCPyMethod *self) {
+    return self->name;
+}
+
+
+const char*
+CFCPyMethod_get_py_method_def(CFCPyMethod *self) {
+    return self->py_method_def;
 }
 
 int
