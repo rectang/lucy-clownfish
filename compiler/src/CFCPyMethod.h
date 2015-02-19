@@ -21,9 +21,22 @@
 extern "C" {
 #endif
 
+typedef struct CFCPyMethod CFCPyMethod;
 struct CFCFunction;
 struct CFCMethod;
 struct CFCClass;
+
+CFCPyMethod*
+CFCPyMethod_new(const char *name, const char *py_method_def);
+
+void
+CFCPyMethod_destroy(CFCPyMethod *self);
+
+const char*
+CFCPyMethod_get_name(CFCPyMethod *self);
+
+const char*
+CFCPyMethod_get_py_method_def(CFCPyMethod *self);
 
 /* Check for:
  * - private methods
