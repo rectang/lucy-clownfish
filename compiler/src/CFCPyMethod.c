@@ -645,20 +645,13 @@ S_trap_context(CFCParamList *param_list, int first_tick) {
 char*
 S_meth_top(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list = CFCMethod_get_param_list(method);
-    const char *self_struct = CFCClass_full_struct_sym(invoker);
-    const char *self_class_var = CFCClass_full_class_var(invoker);
 
     if (CFCParamList_num_vars(param_list) == 1) {
         char pattern[] =
-            "(PyObject *py_self, PyObject *unused) {\n"
-            "    %s* self;\n"
-            "    CFBindArg wrap_self = {%s, &self};\n"
-            "    if (!CFBind_convert_obj(py_self, &wrap_self)) {\n"
-            "        return NULL;\n"
-            "    }\n"
+            "(PyObject *self, PyObject *unused) {\n"
             "    CFISH_UNUSED_VAR(unused);\n"
             ;
-        return CFCUtil_sprintf(pattern, self_struct, self_class_var);
+        return CFCUtil_sprintf(pattern);
     }
     else {
         char *error = NULL;
@@ -670,16 +663,10 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
             return NULL;
         }
         char pattern[] =
-            "(PyObject *py_self, PyObject *args, PyObject *kwargs) {\n"
-            "    %s* self;\n"
-            "    CFBindArg wrap_self = {%s, &self};\n"
-            "    if (!CFBind_convert_obj(py_self, &wrap_self)) {\n"
-            "        return NULL;\n"
-            "    }\n"
+            "(PyObject *self, PyObject *args, PyObject *kwargs) {\n"
             "%s"
             ;
-        char *result = CFCUtil_sprintf(pattern, self_struct, self_class_var,
-                                       arg_parsing);
+        char *result = CFCUtil_sprintf(pattern, arg_parsing);
         FREEMEM(arg_parsing);
         return result;
     }
@@ -923,7 +910,7 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "S_%s%s"
         "%s" // increfs
         "%s" // trap context
-        "    cfargs[0].ptr = py_self;\n"
+        "    cfargs[0].ptr = self;\n"
         "%s" // decrefs
         "    return %s(S_run_%s, &context);\n" // return statement
         "}\n"
