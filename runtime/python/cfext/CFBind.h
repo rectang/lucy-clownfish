@@ -190,7 +190,7 @@ typedef struct CFBindArg {
 } CFBindArg;
 
 typedef struct CFBindStringArg {
-    cfish_String **ptr;
+    void *ptr;
     void *stack_mem;
     PyObject *stringified;
 } CFBindStringArg;
