@@ -332,6 +332,7 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         Py_XDECREF(stringified);
         return 1;
     }
+    cfish_String **ptr = (cfish_String**)arg->ptr;
 
     if (py_obj == Py_None) {
         if (nullable) {
@@ -350,17 +351,16 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         if (!utf8) {
             return 0;
         }
-        *arg->ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem,
-                                                       utf8, size);
+        *ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem, utf8, size);
         return 1;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_STRING)) {
-        *arg->ptr = (cfish_String*)py_obj;
+        *ptr = (cfish_String*)py_obj;
         return 1;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_OBJ)) {
         arg->stringified = (PyObject*)CFISH_Obj_To_String((cfish_Obj*)py_obj);
-        *arg->ptr = (cfish_String*)arg->stringified;
+        *ptr = (cfish_String*)arg->stringified;
         return Py_CLEANUP_SUPPORTED;
     }
     else {
@@ -373,8 +373,7 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         if (!utf8) {
             return 0;
         }
-        *arg->ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem,
-                                                       utf8, size);
+        *ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem, utf8, size);
         return Py_CLEANUP_SUPPORTED;
     }
 }

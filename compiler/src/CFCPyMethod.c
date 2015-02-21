@@ -245,7 +245,7 @@ S_choose_any_t(CFCType *type) {
 }
 
 static char*
-S_gen_declaration(CFCVariable *var, const char *val) {
+S_gen_declaration(CFCVariable *var, const char *val, int tick) {
     CFCType *type = CFCVariable_get_type(var);
     const char *var_name = CFCVariable_micro_sym(var);
     const char *type_str = CFCType_to_c(type);
@@ -257,21 +257,19 @@ S_gen_declaration(CFCVariable *var, const char *val) {
             if (val && strcmp(val, "NULL") != 0) {
                 const char pattern[] =
                     "    const char arg_%s_DEFAULT[] = %s;\n"
-                    "    cfish_String* arg_%s = (cfish_String*)cfish_SStr_wrap_str(\n"
+                    "    cfargs[%d].ptr = cfish_SStr_wrap_str(\n"
                     "        alloca(cfish_SStr_size()), arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
-                    "    CFBindStringArg wrap_arg_%s = {&arg_%s, arg_%s, NULL};\n"
+                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, cfargs[%d].ptr, NULL};\n"
                     ;
-                result = CFCUtil_sprintf(pattern, var_name, val, var_name,
+                result = CFCUtil_sprintf(pattern, var_name, val, tick,
                                          var_name, var_name, var_name,
-                                         var_name, var_name);
+                                         tick, tick);
             }
             else {
                 const char pattern[] =
-                    "    cfish_String* arg_%s = NULL;\n"
-                    "    CFBindStringArg wrap_arg_%s = {&arg_%s, alloca(cfish_SStr_size()), NULL};\n"
+                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, alloca(cfish_SStr_size()), NULL};\n"
                     ;
-                result = CFCUtil_sprintf(pattern, var_name, var_name,
-                                         var_name);
+                result = CFCUtil_sprintf(pattern, var_name, tick);
             }
         }
         else {
@@ -297,14 +295,7 @@ S_gen_declaration(CFCVariable *var, const char *val) {
         }
     }
     else if (CFCType_is_primitive(type)) {
-        if (val) {
-            result = CFCUtil_sprintf("    %s arg_%s = %s;\n",
-                                     type_str, var_name, val);
-        }
-        else {
-            result = CFCUtil_sprintf("    %s arg_%s;\n",
-                                     type_str, var_name);
-        }
+        ;
     }
     else {
         CFCUtil_die("Unexpected type, can't gen declaration: %s", type_str);
@@ -314,18 +305,20 @@ S_gen_declaration(CFCVariable *var, const char *val) {
 }
 
 static char*
-S_gen_target(CFCVariable *var, const char *value) {
+S_gen_target(CFCVariable *var, const char *value, int tick) {
     CFCType *type = CFCVariable_get_type(var);
     const char *specifier = CFCType_get_specifier(type);
-    const char *var_name = CFCVariable_micro_sym(var);
+    const char *micro_sym = CFCVariable_micro_sym(var);
     const char *maybe_maybe = "";
     const char *maybe_wrap = "";
     const char *dest_name;
+    char *var_name = NULL;
     if (CFCType_is_primitive(type)) {
         dest_name = CFCType_get_specifier(type);
         if (value != NULL) {
             maybe_maybe = "maybe_";
         }
+        var_name = CFCUtil_sprintf("cfargs[%d].%s_", tick, dest_name);
     }
     else if (CFCType_is_object(type)) {
         if (strcmp(specifier, "cfish_String") == 0) {
@@ -342,12 +335,15 @@ S_gen_target(CFCVariable *var, const char *value) {
             dest_name = "obj";
             maybe_wrap = "wrap_";
         }
+        var_name = CFCUtil_sprintf("%sarg_%s", maybe_wrap, micro_sym);
     }
     else {
         dest_name = "INVALID";
     }
-    return CFCUtil_sprintf(", CFBind_%sconvert_%s, &%sarg_%s", maybe_maybe,
-                           dest_name, maybe_wrap, var_name);
+    char *content = CFCUtil_sprintf(", CFBind_%sconvert_%s, &%s",
+                                    maybe_maybe, dest_name, var_name);
+    FREEMEM(var_name);
+    return content;
 }
 
 static char*
@@ -386,11 +382,11 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         }
         format_str = CFCUtil_cat(format_str, "O&", NULL);
 
-        char *declaration = S_gen_declaration(var, val);
+        char *declaration = S_gen_declaration(var, val, i);
         declarations = CFCUtil_cat(declarations, declaration, NULL);
         FREEMEM(declaration);
 
-        char *target = S_gen_target(var, val);
+        char *target = S_gen_target(var, val, i);
         targets = CFCUtil_cat(targets, target, NULL);
         FREEMEM(target);
     }
@@ -414,6 +410,15 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         CFCType *type = CFCVariable_get_type(var);
         const char *micro_sym = CFCVariable_micro_sym(var);
         const char *any_t_member = S_choose_any_t(type);
+        if (CFCType_is_primitive(type)) {
+            continue;
+        }
+        else if (CFCType_is_object(type)) {
+            const char *specifier = CFCType_get_specifier(type);
+            if (strcmp(specifier, "cfish_String") == 0) {
+                continue;
+            }
+        }
 
         char pattern[] = "%s    cfargs[%d].%s = arg_%s;\n";
         char *temp = CFCUtil_sprintf(pattern, content, i, any_t_member,
@@ -697,9 +702,11 @@ S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     for (int i = first_tick;i < num_vars; i++) {
         CFCType *type = CFCVariable_get_type(vars[i]);
         if (CFCType_decremented(type)) {
-            const char *var_name = CFCVariable_micro_sym(vars[i]);
-            content = CFCUtil_cat(content, "    CFISH_INCREF(arg_",
-                                  var_name, ");\n", NULL);
+            char pattern[] =
+                "    cfargs[%d].ptr = CFISH_INCREF(cfargs[%d].ptr);\n";
+            char *incref = CFCUtil_sprintf(pattern, i, i);
+            content = CFCUtil_cat(content, incref, NULL);
+            FREEMEM(incref);
         }
     }
     return content;
