@@ -138,6 +138,8 @@ class libclownfish(_Command):
         if modified:
             py_binding = cfc.binding.Python(hierarchy=hierarchy)
             py_binding.set_header(header)
+            import bindings
+            bindings.spec_classes()
             py_binding.write_bindings(parcel="Clownfish", dest=PY_BINDING_DIR)
             hierarchy.write_log()
 
