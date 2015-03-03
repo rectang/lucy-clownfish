@@ -277,20 +277,14 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
                 CFCUtil_die("Can't assign a default of '%s' to a %s",
                             val, type_str);
             }
-            if (strcmp(specifier, "cfish_Hash") == 0
-                || strcmp(specifier, "cfish_VArray") == 0
+            if (strcmp(specifier, "cfish_Hash") != 0
+                && strcmp(specifier, "cfish_VArray") != 0
                 ) {
-                result = CFCUtil_sprintf("    %s arg_%s = NULL;\n", type_str,
-                                         var_name);
-            }
-            else {
                 const char *class_var = CFCType_get_class_var(type);
                 char pattern[] =
-                    "    %s arg_%s = NULL;\n"
-                    "    CFBindArg wrap_arg_%s = {%s, &arg_%s};\n"
+                    "    CFBindArg wrap_arg_%s = {%s, &cfargs[%d].ptr};\n"
                     ;
-                result = CFCUtil_sprintf(pattern, type_str, var_name,
-                                         var_name, class_var, var_name);
+                result = CFCUtil_sprintf(pattern, var_name, class_var, tick);
             }
         }
     }
@@ -310,7 +304,6 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
     const char *specifier = CFCType_get_specifier(type);
     const char *micro_sym = CFCVariable_micro_sym(var);
     const char *maybe_maybe = "";
-    const char *maybe_wrap = "";
     const char *dest_name;
     char *var_name = NULL;
     if (CFCType_is_primitive(type)) {
@@ -323,19 +316,20 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
     else if (CFCType_is_object(type)) {
         if (strcmp(specifier, "cfish_String") == 0) {
             dest_name = "string";
-            maybe_wrap = "wrap_";
+            var_name = CFCUtil_sprintf("wrap_arg_%s", micro_sym);
         }
         else if (strcmp(specifier, "cfish_Hash") == 0) {
             dest_name = "hash";
+            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
         }
         else if (strcmp(specifier, "cfish_VArray") == 0) {
             dest_name = "array";
+            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
         }
         else {
             dest_name = "obj";
-            maybe_wrap = "wrap_";
+            var_name = CFCUtil_sprintf("wrap_arg_%s", micro_sym);
         }
-        var_name = CFCUtil_sprintf("%sarg_%s", maybe_wrap, micro_sym);
     }
     else {
         dest_name = "INVALID";
@@ -404,28 +398,6 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         ;
     content = CFCUtil_sprintf(parse_pattern, num_vars, declarations, keywords,
                               format_str, targets);
-
-    for (int i = first_tick; i < num_vars; i++) {
-        CFCVariable *var = vars[i];
-        CFCType *type = CFCVariable_get_type(var);
-        const char *micro_sym = CFCVariable_micro_sym(var);
-        const char *any_t_member = S_choose_any_t(type);
-        if (CFCType_is_primitive(type)) {
-            continue;
-        }
-        else if (CFCType_is_object(type)) {
-            const char *specifier = CFCType_get_specifier(type);
-            if (strcmp(specifier, "cfish_String") == 0) {
-                continue;
-            }
-        }
-
-        char pattern[] = "%s    cfargs[%d].%s = arg_%s;\n";
-        char *temp = CFCUtil_sprintf(pattern, content, i, any_t_member,
-                                     micro_sym);
-        FREEMEM(content);
-        content = temp;
-    }
 
 CLEAN_UP_AND_RETURN:
     FREEMEM(declarations);
@@ -596,23 +568,24 @@ S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
         const char *micro_sym = CFCVariable_micro_sym(var);
         const char *specifier = CFCType_get_specifier(type);
 
-        const char *pattern;
         if (strcmp(specifier, "cfish_String") == 0) {
-            pattern = "%s    decrefs[%d].ptr = wrap_arg_%s.stringified;\n";
+            char pattern[] =
+                "%s    decrefs[%d].ptr = wrap_arg_%s.stringified;\n";
+            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs,
+                         micro_sym);
+            FREEMEM(decrefs);
+            decrefs = temp;
+            num_decrefs++;
         }
         else if (strcmp(specifier, "cfish_Hash") == 0
                  || strcmp(specifier, "cfish_VArray") == 0
-           ) {
-            pattern = "%s    decrefs[%d].ptr = arg_%s;\n";
+                ) {
+            char pattern[] = "%s    decrefs[%d].ptr = cfargs[%d].ptr;\n";
+            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs, i);
+            FREEMEM(decrefs);
+            decrefs = temp;
+            num_decrefs++;
         }
-        else {
-            continue;
-        }
-        char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs,
-                                     micro_sym);
-        FREEMEM(decrefs);
-        decrefs = temp;
-        num_decrefs++;
     }
 
     if (num_decrefs) {
