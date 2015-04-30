@@ -507,6 +507,7 @@ S_write_parcel_c(CFCBindCore *self, CFCParcel *parcel) {
         "%s"
         "\n"
         "#include \"Clownfish/Class.h\"\n"   // Needed for bootstrap.
+        "#include \"Clownfish/Err.h\"\n" 
         "%s\n"
         "\n"
         "%s\n"
