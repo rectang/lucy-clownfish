@@ -635,19 +635,12 @@ SI_is_string_type(cfish_Class *klass) {
 
 static void
 S_lazy_init_host_obj(pTHX_ cfish_Obj *self) {
-    SV *inner_obj = newSV(0);
-    SvOBJECT_on(inner_obj);
-#if (PERL_VERSION <= 16)
-    PL_sv_objcount++;
-#endif
-    (void)SvUPGRADE(inner_obj, SVt_PVMG);
-    sv_setiv(inner_obj, PTR2IV(self));
-
-    // Connect class association.
     cfish_String *class_name = CFISH_Class_Get_Name(self->klass);
-    HV *stash = gv_stashpvn(CFISH_Str_Get_Ptr8(class_name),
-                            CFISH_Str_Get_Size(class_name), TRUE);
-    SvSTASH_set(inner_obj, (HV*)SvREFCNT_inc(stash));
+    SV *outer_obj = newSV(0);
+    sv_setref_pv(outer_obj, CFISH_Str_Get_Ptr8(class_name), self);
+    SV *inner_obj = SvRV(outer_obj);
+    SvREFCNT_inc(inner_obj);
+    SvREFCNT_dec(outer_obj);
 
     /* Up till now we've been keeping track of the refcount in
      * self->ref.count.  We're replacing ref.count with ref.host_obj, which
@@ -664,6 +657,7 @@ S_lazy_init_host_obj(pTHX_ cfish_Obj *self) {
         SvSHARE(inner_obj);
         if (!cfish_Atomic_cas_ptr((void**)&self->ref, old_ref.host_obj, inner_obj)) {
             // Another thread beat us to it.  Now we have a Perl object to defuse.
+            HV *stash = SvSTASH(inner_obj);
             SvSTASH_set(inner_obj, NULL);
             SvREFCNT_dec((SV*)stash);
             SvOBJECT_off(inner_obj);
