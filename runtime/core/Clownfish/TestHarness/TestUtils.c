@@ -308,7 +308,8 @@ TestUtils_thread_join(Thread *thread) {
 bool TestUtils_has_threads = false;
 
 Thread*
-TestUtils_thread_create(thread_routine_t routine, void *arg) {
+TestUtils_thread_create(thread_routine_t routine, void *arg,
+                        void *host_runtime) {
     UNUSED_VAR(routine);
     UNUSED_VAR(arg);
     THROW(ERR, "No thread support");

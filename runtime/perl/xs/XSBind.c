@@ -1038,9 +1038,10 @@ cfish_Err_trap(CFISH_Err_Attempt_t routine, void *context) {
 void*
 cfish_TestUtils_clone_host_runtime() {
     PerlInterpreter *interp = (PerlInterpreter*)PERL_GET_CONTEXT;
-    PerlInterpreter *clone  = perl_clone(interp, CLONEf_CLONE_HOST);
+    //PerlInterpreter *clone  = perl_clone(interp, CLONEf_CLONE_HOST);
     PERL_SET_CONTEXT(interp);
-    return clone;
+    return NULL;
+    //return clone;
 }
 
 void
