@@ -758,10 +758,15 @@ CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
         S_lazy_init_host_obj(aTHX_ self);
     }
     SV *perl_obj = newRV_inc((SV*)self->ref.host_obj);
-#if PERL_VERSION <= 16
-    // Enable overloading.
-    SvAMAGIC_on(perl_obj);
+
+    // Enable overloading for Perl 5.8.x
+#if PERL_VERSION < 10
+    HV *stash = SvSTASH((SV*)self->ref.host_obj);
+    if (Gv_AMG(stash)) {
+        SvAMAGIC_on(perl_obj);
+    }
 #endif
+
     return perl_obj;
 }
 
