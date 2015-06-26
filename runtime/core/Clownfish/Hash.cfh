@@ -16,6 +16,29 @@
 
 parcel Clownfish;
 
+__C__
+
+typedef struct StringableITable {
+    cfish_method_t methods[1];
+} StringableITable;
+
+typedef struct Stringable_t {
+    cfish_Obj *obj;
+    StringableITable *itable;
+} Stringable_t;
+
+typedef cfish_String*
+(*Stringable_Stringify_t)(cfish_Obj *self);
+extern size_t Stringable_Stringify_OFFSET;
+
+typedef struct HostStringable {
+    CFISH_OBJ_HEAD
+    cfish_Class *klass;
+    void *host_obj;
+} HostStringable;
+
+__END_C__
+
 /**
  * Hashtable.
  *
@@ -70,6 +93,9 @@ public final class Clownfish::Hash inherits Clownfish::Obj {
 
     public nullable Obj*
     Fetch_Utf8(Hash *self, const char *key, size_t key_len);
+
+    public nullable Obj*
+    Stringify_And_Fetch(Hash *self, Stringable_t key);
 
     /** Attempt to delete a key-value pair from the hash.
      *

@@ -1045,6 +1045,40 @@ CFISH_Bool_To_Host_IMP(cfish_BoolNum *self) {
     return newSViv((IV)self->value);
 }
 
+/******************** HostStringable *********************/
+
+static cfish_String*
+S_call_stringify(HostStringable *self) {
+    dTHX;
+    dSP;
+    EXTEND(SP, 1);
+    ENTER;
+    SAVETMPS;
+    PUSHMARK(SP);
+    mPUSHs((SV*)self->host_obj);
+    PUTBACK;
+
+    int count = call_method("stringify", G_SCALAR);
+    if (count != 1) {
+        CFISH_THROW(CFISH_ERR, "Bad callback to 'stringify': %i32",
+                    (int32_t)count);
+    }
+    SV *return_sv = POPs;
+    cfish_String *retval = (cfish_String*)XSBind_perl_to_cfish(aTHX_ return_sv);
+    FREETMPS;
+    LEAVE;
+
+    return retval;
+}
+
+StringableITable stringable_itable;
+
+StringableITable*
+XSBind_hoststringable_itable(void) {
+    stringable_itable.methods[0] = (cfish_method_t)S_call_stringify;
+    return &stringable_itable;
+}
+
 /********************* Clownfish::TestHarness::TestUtils ********************/
 
 

@@ -16,12 +16,29 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2;
+package MyStringable;
+use Clownfish;
+
+sub new {
+    my ($class, $value) = @_;
+    return bless {
+        value => Clownfish::String->new($value)
+    }, $class;
+}
+
+sub stringify {shift->{value}}
+
+package main;
+use Test::More tests => 3;
 use Clownfish qw( to_perl to_clownfish );
 
 my $hash = Clownfish::Hash->new( capacity => 10 );
 $hash->store( "foo", Clownfish::String->new("bar") );
 $hash->store( "baz", Clownfish::String->new("banana") );
+
+my $host_stringer = MyStringable->new("foo");
+my $value = $hash->stringify_and_fetch($host_stringer);
+is(to_perl($value), "bar", "Implement Stringable interface in host");
 
 ok( !defined( $hash->fetch("blah") ),
     "fetch for a non-existent key returns undef" );
@@ -30,3 +47,4 @@ my %hash_with_utf8_keys = ( "\x{263a}" => "foo" );
 my $round_tripped = to_perl( to_clownfish( \%hash_with_utf8_keys ) );
 is_deeply( $round_tripped, \%hash_with_utf8_keys,
     "Round trip conversion of hash with UTF-8 keys" );
+

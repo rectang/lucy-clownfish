@@ -312,6 +312,19 @@ PPCODE:
     if (value) { CFISH_INCREF(value); }
     CFISH_Hash_Store_IMP(self, key, value);
 }
+
+SV*
+stringify_and_fetch(self, key_sv)
+    cfish_Hash *self;
+    SV *key_sv;
+CODE:
+    HostStringable wrapper = {{1}, NULL, key_sv};
+    Stringable_t stringable = {(cfish_Obj*)&wrapper,
+                               XSBind_hoststringable_itable()};
+    cfish_Obj *value = CFISH_Hash_Stringify_And_Fetch(self, stringable);
+    RETVAL = CFISH_OBJ_TO_SV(value);
+OUTPUT:
+    RETVAL
 END_XS_CODE
 
     my $binding = Clownfish::CFC::Binding::Perl::Class->new(

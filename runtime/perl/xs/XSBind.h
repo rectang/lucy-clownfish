@@ -288,6 +288,9 @@ cfish_XSBind_allot_params(pTHX_ SV** stack, int32_t start,
 #define XSBIND_ALLOT_SV(ptr, key, keylen, required) \
     ptr, key, keylen, required, XSBIND_WANT_SV, NULL, NULL
 
+StringableITable*
+XSBind_hoststringable_itable(void);
+
 /* Define short names for most of the symbols in this file.  Note that these
  * short names are ALWAYS in effect, since they are only used for Perl and we
  * can be confident they don't conflict with anything.  (It's prudent to use

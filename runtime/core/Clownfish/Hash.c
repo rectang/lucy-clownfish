@@ -28,6 +28,8 @@
 #include "Clownfish/Vector.h"
 #include "Clownfish/Util/Memory.h"
 
+size_t Stringable_Stringify_OFFSET = 0;
+
 // TOMBSTONE is shared across threads, so it must never be incref'd or
 // decref'd.
 static String *TOMBSTONE;
@@ -194,6 +196,17 @@ SI_fetch_entry(Hash *self, String *key, size_t hash_sum) {
 Obj*
 Hash_Fetch_IMP(Hash *self, String *key) {
     HashEntry *entry = SI_fetch_entry(self, key, Str_Hash_Sum(key));
+    return entry ? entry->value : NULL;
+}
+
+Obj*
+Hash_Stringify_And_Fetch_IMP(Hash *self, Stringable_t key) {
+    Stringable_Stringify_t stringify
+        = (Stringable_Stringify_t)cfish_method(key.itable,
+                                               Stringable_Stringify_OFFSET);
+    String *string = stringify(key.obj);
+    HashEntry *entry = SI_fetch_entry(self, string, Str_Hash_Sum(string));
+    DECREF(string);
     return entry ? entry->value : NULL;
 }
 
