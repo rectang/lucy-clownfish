@@ -128,9 +128,6 @@ Class_bootstrap(const cfish_ClassSpec *specs, size_t num_specs,
         // Init_Obj clears all klass ivars, so `class_alloc_size` must be
         // recalculated.
         Class_Init_Obj_IMP(CLASS, klass);
-        if (cfish_Class_bootstrap_hook1 != NULL) {
-            cfish_Class_bootstrap_hook1(klass);
-        }
 
         uint32_t novel_offset = parent
                                 ? parent->class_alloc_size
@@ -149,6 +146,9 @@ Class_bootstrap(const cfish_ClassSpec *specs, size_t num_specs,
         }
         else {
             klass->obj_alloc_size = ivars_offset + spec->ivars_size;
+        }
+        if (cfish_Class_bootstrap_hook1 != NULL) {
+            cfish_Class_bootstrap_hook1(klass);
         }
 
         klass->flags = 0;

@@ -59,7 +59,7 @@ CFCPyClass_new(CFCClass *client) {
     CFCPyClass *self = (CFCPyClass*)CFCBase_allocate(&CFCPERLCLASS_META);
     CFCParcel *parcel = CFCClass_get_parcel(client);
     self->parcel = (CFCParcel*)CFCBase_incref((CFCBase*)parcel);
-    self->class_name = CFCUtil_strdup(CFCClass_get_class_name(client));
+    self->class_name = CFCUtil_strdup(CFCClass_get_name(client));
     self->client = (CFCClass*)CFCBase_incref((CFCBase*)client);
     self->pre_code = NULL;
     self->meth_defs = CFCUtil_strdup("");
@@ -175,6 +175,8 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
     CFCMethod **methods = CFCClass_fresh_methods(klass);
     for (size_t j = 0; methods[j] != NULL; j++) {
         CFCMethod *meth = methods[j];
+        CFCMethod_excluded_from_host(meth);
+        CFCPyMethod_can_be_bound(meth);
 
         if (CFCMethod_excluded_from_host(meth)
             || !CFCPyMethod_can_be_bound(meth)
@@ -192,7 +194,6 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
         meth_defs = CFCUtil_cat(meth_defs, "    ", meth_def, "\n", NULL);
         FREEMEM(meth_def);
     }
-    FREEMEM(methods);
 
     // Complete the PyMethodDef array.
     const char *struct_sym = CFCClass_get_struct_sym(klass);
@@ -240,10 +241,12 @@ CFCPyClass_exclude_method(CFCPyClass *self, const char *name) {
         CFCUtil_die("Can't exclude_method %s -- method not found in %s",
                     name, self->class_name);
     }
+    /*
     if (strcmp(CFCMethod_get_class_name(method), self->class_name) != 0) {
         CFCUtil_die("Can't exclude_method %s -- method not fresh in %s",
                     name, self->class_name);
     }
+    */
     CFCMethod_exclude_from_host(method);
 }
 

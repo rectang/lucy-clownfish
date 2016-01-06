@@ -53,7 +53,7 @@ CFCPyMethod_func_can_be_bound(struct CFCFunction *func);
  * class.
  */
 char*
-CFCPyMethod_callback_def(struct CFCMethod *method);
+CFCPyMethod_callback_def(struct CFCMethod *method, struct CFCClass *invoker);
 
 char*
 CFCPyMethod_wrapper(struct CFCMethod *method, struct CFCClass *invoker);

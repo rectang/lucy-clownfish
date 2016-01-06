@@ -22,24 +22,23 @@ def spec_obj():
     klass = cfc.model.Class.fetch_singleton(parcel='Clownfish',
                                             class_name='Clownfish::Obj')
     obj_binding = cfc.binding.python.Class(client=klass)
-    obj_binding.set_pre_code(obj_custom_code)
-    meth_def = '{"is_a", (PyCFunction)S_CFISH_Obj_Is_A, METH_O, NULL}'
-    obj_binding.exclude_method('Is_A')
-    obj_binding.add_py_method_def(meth_def)
+    #obj_binding.set_pre_code(obj_custom_code)
+    #meth_def = '{"is_a", (PyCFunction)S_cfish_Obj_is_a, METH_O, NULL}'
+   # obj_binding.exclude_method('Is_A')
+    #obj_binding.add_py_method_def(meth_def)
     obj_binding.register()
 
 obj_custom_code = """
 static PyObject*
-S_CFISH_Obj_Is_A(PyObject *py_self, PyObject *class_name) {
+S_cfish_Obj_is_a(PyObject *py_self, PyObject *class_name) {
     Py_ssize_t size;
     char *utf8 = PyUnicode_AsUTF8AndSize(class_name, &size);
     if (!utf8) {
         return NULL;
     }
-    cfish_StackString *name = CFISH_SSTR_WRAP_UTF8(utf8, size);
-    cfish_Class *klass
-        = cfish_Class_singleton((cfish_String*)name, NULL);
-    bool result = CFISH_Obj_Is_A((cfish_Obj*)py_self, klass);
+    cfish_String *name = CFISH_SSTR_WRAP_UTF8(utf8, size);
+    cfish_Class *klass = cfish_Class_singleton(name, NULL);
+    bool result = cfish_Obj_is_a((cfish_Obj*)py_self, klass);
     return PyBool_FromLong(result);
 }
 """
