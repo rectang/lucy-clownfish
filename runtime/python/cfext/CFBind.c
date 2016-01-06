@@ -35,10 +35,13 @@
 #include "Clownfish/Util/Memory.h"
 #include "Clownfish/Util/StringHelper.h"
 #include "Clownfish/String.h"
-#include "Clownfish/VArray.h"
+#include "Clownfish/Vector.h"
 #include "Clownfish/Hash.h"
 #include "Clownfish/HashIterator.h"
 #include "Clownfish/ByteBuf.h"
+#include "Clownfish/Blob.h"
+#include "Clownfish/Boolean.h"
+#include "Clownfish/Num.h"
 #include "Clownfish/Num.h"
 #include "Clownfish/LockFreeRegistry.h"
 
@@ -90,13 +93,13 @@ CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess) {
 }
 
 static PyObject*
-S_cfish_array_to_python_list(cfish_VArray *varray) {
-    uint32_t num_elems = CFISH_VA_Get_Size(varray);
+S_cfish_array_to_python_list(cfish_Vector *vec) {
+    uint32_t num_elems = CFISH_Vec_Get_Size(vec);
     PyObject *list = PyList_New(num_elems);
 
     // Iterate over array elems.
     for (uint32_t i = 0; i < num_elems; i++) {
-        cfish_Obj *val = CFISH_VA_Fetch(varray, i);
+        cfish_Obj *val = CFISH_Vec_Fetch(vec, i);
         PyObject *item = CFBind_cfish_to_py(val);
         PyList_SET_ITEM(list, i, item);
     }
@@ -112,9 +115,9 @@ S_cfish_hash_to_python_dict(cfish_Hash *hash) {
     cfish_HashIterator *iter = cfish_HashIter_new(hash);
     while (CFISH_HashIter_Next(iter)) {
         cfish_String *key = (cfish_String*)CFISH_HashIter_Get_Key(iter);
-        if (!CFISH_Obj_Is_A((cfish_Obj*)key, CFISH_STRING)) {
+        if (!cfish_Obj_is_a((cfish_Obj*)key, CFISH_STRING)) {
             CFISH_THROW(CFISH_ERR, "Non-string key: %o",
-                        CFISH_Obj_Get_Class_Name((cfish_Obj*)key));
+                        cfish_Obj_get_class_name((cfish_Obj*)key));
         }
         size_t size = CFISH_Str_Get_Size(key);
         const char *ptr = CFISH_Str_Get_Ptr8(key);
@@ -137,24 +140,24 @@ S_cfish_to_py(cfish_Obj *obj, bool zeroref) {
         Py_INCREF(Py_None);
         retval = Py_None;
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_STRING)) {
+    else if (cfish_Obj_is_a(obj, CFISH_STRING)) {
         const char *ptr = CFISH_Str_Get_Ptr8((cfish_String*)obj);
         size_t size = CFISH_Str_Get_Size((cfish_String*)obj);
         retval = PyUnicode_FromStringAndSize(ptr, size);
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_BYTEBUF)) {
+    else if (cfish_Obj_is_a(obj, CFISH_BYTEBUF)) {
         char *buf = CFISH_BB_Get_Buf((cfish_ByteBuf*)obj);
         size_t size = CFISH_BB_Get_Size((cfish_ByteBuf*)obj);
         retval = PyBytes_FromStringAndSize(buf, size);
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_VARRAY)) {
-        retval = S_cfish_array_to_python_list((cfish_VArray*)obj);
+    else if (cfish_Obj_is_a(obj, CFISH_VECTOR)) {
+        retval = S_cfish_array_to_python_list((cfish_Vector*)obj);
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_HASH)) {
+    else if (cfish_Obj_is_a(obj, CFISH_HASH)) {
         retval = S_cfish_hash_to_python_dict((cfish_Hash*)obj);
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_FLOATNUM)) {
-        retval = PyFloat_FromDouble(CFISH_Obj_To_F64(obj));
+    else if (cfish_Obj_is_a(obj, CFISH_FLOAT)) {
+        retval = PyFloat_FromDouble(CFISH_Float_Get_Value((cfish_Float*)obj));
     }
     else if (obj == (cfish_Obj*)CFISH_TRUE) {
         Py_INCREF(Py_True);
@@ -164,8 +167,8 @@ S_cfish_to_py(cfish_Obj *obj, bool zeroref) {
         Py_INCREF(Py_False);
         retval = Py_False;
     }
-    else if (CFISH_Obj_Is_A(obj, CFISH_INTNUM)) {
-        int64_t num = CFISH_Obj_To_I64(obj);
+    else if (cfish_Obj_is_a(obj, CFISH_INTEGER)) {
+        int64_t num = CFISH_Int_Get_Value((cfish_Integer*)obj);
         retval = PyLong_FromLongLong(num);
     }
     else {
@@ -194,14 +197,14 @@ CFBind_cfish_to_py_zeroref(cfish_Obj *obj) {
     return S_cfish_to_py(obj, true);
 }
 
-static cfish_VArray*
-S_py_list_to_varray(PyObject *list) {
+static cfish_Vector*
+S_py_list_to_vector(PyObject *list) {
     Py_ssize_t size = PyList_GET_SIZE(list);
-    cfish_VArray *array = cfish_VA_new(size);
+    cfish_Vector *vec = cfish_Vec_new(size);
     for (Py_ssize_t i = 0; i < size; i++) {
-        CFISH_VA_Store(array, i, CFBind_py_to_cfish(PyList_GET_ITEM(list, i)));
+        CFISH_Vec_Store(vec, i, CFBind_py_to_cfish(PyList_GET_ITEM(list, i)));
     }
-    return array;
+    return vec;
 }
 
 static cfish_Hash*
@@ -233,7 +236,7 @@ S_py_dict_to_hash(PyObject *dict) {
 cfish_Obj*
 CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass) {
     cfish_Obj *obj = CFBind_py_to_cfish(py_obj);
-    if (obj && !CFISH_Obj_Is_A(obj, klass)) {
+    if (obj && !cfish_Obj_is_a(obj, klass)) {
         CFISH_DECREF(obj);
         obj = NULL;
     }
@@ -267,17 +270,17 @@ CFBind_py_to_cfish(PyObject *py_obj) {
         return (cfish_Obj*)cfish_BB_new_bytes(ptr, size);
     }
     else if (PyList_CheckExact(py_obj)) {
-        return (cfish_Obj*)S_py_list_to_varray(py_obj);
+        return (cfish_Obj*)S_py_list_to_vector(py_obj);
     }
     else if (PyDict_CheckExact(py_obj)) {
         return (cfish_Obj*)S_py_dict_to_hash(py_obj);
     }
     else if (PyLong_CheckExact(py_obj)) {
         // Raises ValueError on overflow.
-        return (cfish_Obj*)cfish_Int64_new(PyLong_AsLongLong(py_obj));
+        return (cfish_Obj*)cfish_Int_new(PyLong_AsLongLong(py_obj));
     }
     else if (PyFloat_CheckExact(py_obj)) {
-        return (cfish_Obj*)cfish_Float64_new(PyFloat_AS_DOUBLE(py_obj));
+        return (cfish_Obj*)cfish_Float_new(PyFloat_AS_DOUBLE(py_obj));
     }
     else {
         // TODO: Wrap in some sort of cfish_Host object instead of
@@ -351,7 +354,7 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         if (!utf8) {
             return 0;
         }
-        *ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem, utf8, size);
+        *ptr = cfish_Str_init_stack_string(arg->stack_mem, utf8, size);
         return 1;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_STRING)) {
@@ -373,7 +376,7 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         if (!utf8) {
             return 0;
         }
-        *ptr = (cfish_String*)cfish_SStr_wrap_str(arg->stack_mem, utf8, size);
+        *ptr = cfish_Str_init_stack_string(arg->stack_mem, utf8, size);
         return Py_CLEANUP_SUPPORTED;
     }
 }
@@ -428,7 +431,7 @@ CFBind_maybe_convert_hash(PyObject *py_obj, cfish_Hash **hash_ptr) {
 }
 
 static int
-S_convert_array(PyObject *py_obj, cfish_VArray **array_ptr, bool nullable) {
+S_convert_array(PyObject *py_obj, cfish_Vector **array_ptr, bool nullable) {
     if (py_obj == NULL) { // Py_CLEANUP_SUPPORTED cleanup
         CFISH_DECREF(*array_ptr);
         return 1;
@@ -444,11 +447,11 @@ S_convert_array(PyObject *py_obj, cfish_VArray **array_ptr, bool nullable) {
         }
     }
     else if (PyList_CheckExact(py_obj)) {
-        *array_ptr = S_py_list_to_varray(py_obj);
+        *array_ptr = S_py_list_to_vector(py_obj);
         return Py_CLEANUP_SUPPORTED;
     }
-    else if (S_py_obj_is_a(py_obj, CFISH_VARRAY)) {
-        *array_ptr = (cfish_VArray*)CFISH_INCREF(py_obj);
+    else if (S_py_obj_is_a(py_obj, CFISH_VECTOR)) {
+        *array_ptr = (cfish_Vector*)CFISH_INCREF(py_obj);
         return Py_CLEANUP_SUPPORTED;
     }
     else {
@@ -457,12 +460,12 @@ S_convert_array(PyObject *py_obj, cfish_VArray **array_ptr, bool nullable) {
 }
 
 int
-CFBind_convert_array(PyObject *py_obj, cfish_VArray **array_ptr) {
+CFBind_convert_array(PyObject *py_obj, cfish_Vector **array_ptr) {
     return S_convert_array(py_obj, array_ptr, false);
 }
 
 int
-CFBind_maybe_convert_array(PyObject *py_obj, cfish_VArray **array_ptr) {
+CFBind_maybe_convert_array(PyObject *py_obj, cfish_Vector **array_ptr) {
     return S_convert_array(py_obj, array_ptr, true);
 }
 
@@ -899,18 +902,21 @@ CFBind_run_trapped(CFISH_Err_Attempt_t func, void *vcontext, int ret_type) {
 /******************************** Obj **************************************/
 
 uint32_t
-CFISH_Obj_Get_RefCount_IMP(cfish_Obj *self) {
+cfish_get_refcount(void *vself) {
+    cfish_Obj *self = (cfish_Obj*)vself;
     return Py_REFCNT(self);
 }
 
 cfish_Obj*
-CFISH_Obj_Inc_RefCount_IMP(cfish_Obj *self) {
+cfish_inc_refcount(void *vself) {
+    cfish_Obj *self = (cfish_Obj*)vself;
     Py_INCREF(self);
     return self;
 }
 
 uint32_t
-CFISH_Obj_Dec_RefCount_IMP(cfish_Obj *self) {
+cfish_dec_refcount(void *vself) {
+    cfish_Obj *self = (cfish_Obj*)vself;
     uint32_t modified_refcount = Py_REFCNT(self);
     Py_DECREF(self);
     return modified_refcount;
@@ -921,14 +927,15 @@ CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
     return self;
 }
 
+
+
 /******************************* Class *************************************/
 
 void
 CFBind_class_bootstrap_hook1(cfish_Class *self) {
     PyTypeObject *py_type = S_get_cached_py_type(self);
-
     if (PyType_HasFeature(py_type, Py_TPFLAGS_READY)) {
-        if (py_type->tp_basicsize != self->obj_alloc_size) {
+        if (py_type->tp_basicsize != (Py_ssize_t)self->obj_alloc_size) {
             fprintf(stderr, "PyType for %s readied with wrong alloc size\n",
                     py_type->tp_name),
             exit(1);
@@ -1024,10 +1031,10 @@ cfish_Class_register_with_host(cfish_Class *singleton, cfish_Class *parent) {
     CFISH_UNUSED_VAR(parent);
 }
 
-cfish_VArray*
+cfish_Vector*
 cfish_Class_fresh_host_methods(cfish_String *class_name) {
     CFISH_UNUSED_VAR(class_name);
-    return cfish_VA_new(0);
+    return cfish_Vec_new(0);
 }
 
 cfish_String*
@@ -1130,6 +1137,64 @@ cfish_Err_trap(CFISH_Err_Attempt_t routine, void *context) {
     return error;
 }
 
+/******************************* to host ***********************************/
+
+void*
+CFISH_Str_To_Host_IMP(cfish_String *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_BB_To_Host_IMP(cfish_ByteBuf *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Blob_To_Host_IMP(cfish_Blob *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Vec_To_Host_IMP(cfish_Vector *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Hash_To_Host_IMP(cfish_Hash *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Float_To_Host_IMP(cfish_Float *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Int_To_Host_IMP(cfish_Integer *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void*
+CFISH_Bool_To_Host_IMP(cfish_Boolean *self) {
+    CFISH_UNUSED_VAR(self);
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
 /************************** LockFreeRegistry *******************************/
 
 void*
@@ -1139,4 +1204,19 @@ CFISH_LFReg_To_Host_IMP(cfish_LockFreeRegistry *self) {
     CFISH_UNREACHABLE_RETURN(void*);
 }
 
+/**************************** TestUtils **********************************/
 
+void*
+cfish_TestUtils_clone_host_runtime() {
+    return NULL;
+}
+
+void
+cfish_TestUtils_set_host_runtime(void *runtime) {
+    CFISH_UNUSED_VAR(runtime);
+}
+
+void
+cfish_TestUtils_destroy_host_runtime(void *runtime) {
+    CFISH_UNUSED_VAR(runtime);
+}

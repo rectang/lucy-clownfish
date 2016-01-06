@@ -41,7 +41,7 @@ CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess);
   * incremented PyObject.
   *
   *     String   -> string
-  *     VArray   -> list
+  *     Vector   -> list
   *     Hash     -> dict
   *     NULL     -> None
   *     ByteBuf  -> bytes
@@ -65,7 +65,7 @@ CFBind_cfish_to_py_zeroref(cfish_Obj *obj);
   * incremented Clownfish Obj.
   *
   *     string -> String
-  *     list   -> VArray
+  *     list   -> Vector
   *     dict   -> Hash
   *     None   -> NULL
   *     bytes  -> ByteBuf
@@ -207,7 +207,7 @@ CFBind_convert_string(PyObject *input, CFBindStringArg *arg);
 int
 CFBind_convert_hash(PyObject *input, cfish_Hash **ptr);
 int
-CFBind_convert_array(PyObject *input, cfish_VArray **ptr);
+CFBind_convert_array(PyObject *input, cfish_Vector **ptr);
 int
 CFBind_maybe_convert_obj(PyObject *input, CFBindArg *arg);
 int
@@ -215,7 +215,7 @@ CFBind_maybe_convert_string(PyObject *input, CFBindStringArg *arg);
 int
 CFBind_maybe_convert_hash(PyObject *input, cfish_Hash **ptr);
 int
-CFBind_maybe_convert_array(PyObject *input, cfish_VArray **ptr);
+CFBind_maybe_convert_array(PyObject *input, cfish_Vector **ptr);
 
 /* ParseTuple conversion routines for primitive numeric types.
  *

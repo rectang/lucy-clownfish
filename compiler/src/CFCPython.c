@@ -77,7 +77,7 @@ void
 CFCPython_set_header(CFCPython *self, const char *header) {
     CFCUTIL_NULL_CHECK(header);
     free(self->header);
-    self->header = CFCUtil_strdup(header);
+    self->header = CFCUtil_sprintf("/* %s */", header);
 }
 
 void
@@ -136,12 +136,11 @@ S_gen_callbacks(CFCPython *self, CFCParcel *parcel, CFCClass **ordered) {
 
             // Define callback.
             if (CFCMethod_novel(method) && !CFCMethod_final(method)) {
-                char *cb_def = CFCPyMethod_callback_def(method);
+                char *cb_def = CFCPyMethod_callback_def(method, klass);
                 callbacks = CFCUtil_cat(callbacks, cb_def, "\n", NULL);
                 FREEMEM(cb_def);
             }
         }
-        FREEMEM(fresh_methods);
     }
 
     static const char helpers[] =
@@ -234,8 +233,8 @@ S_gen_callbacks(CFCPython *self, CFCParcel *parcel, CFCClass **ordered) {
         "    if (!nullable && result == NULL) {\n"
         "        CFISH_THROW(CFISH_ERR, \"%s cannot return NULL\", meth_name);\n"
         "    }\n"
-        "    else if (!CFISH_Obj_Is_A(result, ret_class)) {\n"
-        "        cfish_Class *result_class = CFISH_Obj_Get_Class(result);\n"
+        "    else if (!cfish_Obj_is_a(result, ret_class)) {\n"
+        "        cfish_Class *result_class = cfish_Obj_get_class(result);\n"
         "        CFISH_DECREF(result);\n"
         "        CFISH_THROW(CFISH_ERR, \"%s returned %o instead of %o\", meth_name,\n"
         "                    CFISH_Class_Get_Name(result_class),\n"
@@ -417,7 +416,7 @@ S_gen_class_bindings(CFCPython *self, CFCParcel *parcel,
         if (CFCClass_included(klass)) {
             continue;
         }
-        const char *class_name = CFCClass_get_class_name(klass);
+        const char *class_name = CFCClass_get_name(klass);
         CFCPyClass *class_binding = CFCPyClass_singleton(class_name);
         if (!class_binding) {
             // No binding spec'd out, so create one using defaults.
@@ -577,9 +576,9 @@ CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *d
     // Generate header files declaring callbacks.
     CFCBindCore *core_binding
         = CFCBindCore_new(self->hierarchy, self->header, self->footer);
-    CFCBindCore_write_callbacks_h(core_binding);
+    //CFCBindCore_write_callbacks_h(core_binding);
+    //CFCBindCore_write_all_modified(core_binding, 1);
     CFCBase_decref((CFCBase*)core_binding);
-
     S_write_hostdefs(self);
     S_write_module_file(self, parcel, dest);
 }

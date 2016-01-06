@@ -68,6 +68,9 @@ S_types_can_be_bound(CFCParamList *param_list, CFCType *return_type) {
         if (strcmp("cfish_ClassSpec", CFCType_get_specifier(type)) == 0) {
             return false;
         }
+        if (strcmp("cfish_Thread", CFCType_get_specifier(type)) == 0) {
+            return false;
+        }
     }
 
     // Test whether return type can be mapped automatically.
@@ -144,7 +147,7 @@ S_build_py_args(CFCParamList *param_list) {
     char *py_args = CFCUtil_sprintf(pattern, num_vars - 1);
 
     for (int i = 1; vars[i] != NULL; i++) {
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
+        const char *var_name = CFCVariable_get_name(vars[i]);
         CFCType *type = CFCVariable_get_type(vars[i]);
         char *conversion = CFCPyTypeMap_c_to_py(type, var_name);
         py_args = CFCUtil_cat(py_args, ",\n        ", conversion, NULL);
@@ -247,7 +250,7 @@ S_choose_any_t(CFCType *type) {
 static char*
 S_gen_declaration(CFCVariable *var, const char *val, int tick) {
     CFCType *type = CFCVariable_get_type(var);
-    const char *var_name = CFCVariable_micro_sym(var);
+    const char *var_name = CFCVariable_get_name(var);
     const char *type_str = CFCType_to_c(type);
     char *result = NULL;
 
@@ -257,8 +260,8 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
             if (val && strcmp(val, "NULL") != 0) {
                 const char pattern[] =
                     "    const char arg_%s_DEFAULT[] = %s;\n"
-                    "    cfargs[%d].ptr = cfish_SStr_wrap_str(\n"
-                    "        alloca(cfish_SStr_size()), arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
+                    "    cfargs[%d].ptr = CFISH_SSTR_WRAP_UTF8(\n"
+                    "        arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
                     "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, cfargs[%d].ptr, NULL};\n"
                     ;
                 result = CFCUtil_sprintf(pattern, var_name, val, tick,
@@ -267,7 +270,7 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
             }
             else {
                 const char pattern[] =
-                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, alloca(cfish_SStr_size()), NULL};\n"
+                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, CFISH_ALLOCA_OBJ(CFISH_STRING), NULL};\n"
                     ;
                 result = CFCUtil_sprintf(pattern, var_name, tick);
             }
@@ -302,7 +305,7 @@ static char*
 S_gen_target(CFCVariable *var, const char *value, int tick) {
     CFCType *type = CFCVariable_get_type(var);
     const char *specifier = CFCType_get_specifier(type);
-    const char *micro_sym = CFCVariable_micro_sym(var);
+    const char *micro_sym = CFCVariable_get_name(var);
     const char *maybe_maybe = "";
     const char *dest_name;
     char *var_name = NULL;
@@ -358,7 +361,7 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         CFCVariable *var  = vars[i];
         const char  *val  = vals[i];
 
-        const char *var_name = CFCVariable_micro_sym(var);
+        const char *var_name = CFCVariable_get_name(var);
         keywords = CFCUtil_cat(keywords, "\"", var_name, "\", ", NULL);
 
         // Build up ParseTuple format string.
@@ -410,7 +413,7 @@ CLEAN_UP_AND_RETURN:
 static char*
 S_build_pymeth_invocation(CFCMethod *method) {
     CFCType *return_type = CFCMethod_get_return_type(method);
-    const char *micro_sym = CFCSymbol_micro_sym((CFCSymbol*)method);
+    const char *micro_sym = CFCSymbol_get_name((CFCSymbol*)method);
     char *invocation = NULL;
     const char *ret_type_str = CFCType_to_c(return_type);
 
@@ -458,7 +461,7 @@ S_callback_refcount_mods(CFCParamList *param_list) {
     for (int i = 0; arg_vars[i] != NULL; i++) {
         CFCVariable *var  = arg_vars[i];
         CFCType     *type = CFCVariable_get_type(var);
-        const char  *name = CFCVariable_micro_sym(var);
+        const char  *name = CFCVariable_get_name(var);
         if (!CFCType_is_object(type)) {
             continue;
         }   
@@ -476,13 +479,13 @@ S_callback_refcount_mods(CFCParamList *param_list) {
 }
 
 char*
-CFCPyMethod_callback_def(CFCMethod *method) {
+CFCPyMethod_callback_def(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list   = CFCMethod_get_param_list(method);
     CFCVariable **vars         = CFCParamList_get_variables(param_list);
     CFCType      *return_type  = CFCMethod_get_return_type(method);
     const char   *ret_type_str = CFCType_to_c(return_type);
-    const char   *override_sym = CFCMethod_full_override_sym(method);
     const char   *params       = CFCParamList_to_c(param_list);
+    char         *override_sym = CFCMethod_full_override_sym(method, invoker);
     char *content;
 
     if (CFCPyMethod_can_be_bound(method)) {
@@ -508,7 +511,7 @@ CFCPyMethod_callback_def(CFCMethod *method) {
     else {
         char *unused = S_build_unused_vars(vars);
         char *unreachable = S_maybe_unreachable(return_type);
-        char *meth_sym = CFCMethod_full_method_sym(method, NULL);
+        char *meth_sym = CFCMethod_full_method_sym(method, invoker);
         const char pattern[] =
             "%s\n"
             "%s(%s) {%s\n"
@@ -521,6 +524,7 @@ CFCPyMethod_callback_def(CFCMethod *method) {
         FREEMEM(unreachable);
     }
 
+    FREEMEM(override_sym);
     return content;
 }
 
@@ -529,7 +533,7 @@ S_build_unused_vars(CFCVariable **vars) {
     char *unused = CFCUtil_strdup("");
 
     for (int i = 0; vars[i] != NULL; i++) {
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
+        const char *var_name = CFCVariable_get_name(vars[i]);
         size_t size = strlen(unused) + strlen(var_name) + 80;
         unused = (char*)REALLOCATE(unused, size);
         strcat(unused, "\n    CFISH_UNUSED_VAR(");
@@ -565,7 +569,7 @@ S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
     for (int i = first_tick; i < num_vars; i++) {
         CFCVariable *var = vars[i];
         CFCType *type = CFCVariable_get_type(var);
-        const char *micro_sym = CFCVariable_micro_sym(var);
+        const char *micro_sym = CFCVariable_get_name(var);
         const char *specifier = CFCType_get_specifier(type);
 
         if (strcmp(specifier, "cfish_String") == 0) {
@@ -620,7 +624,7 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
         char *error = NULL;
         char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
         if (error) {
-            CFCUtil_die("%s in %s", error, CFCMethod_get_macro_sym(method));
+            CFCUtil_die("%s in %s", error, CFCMethod_get_name(method));
         }
         if (!arg_parsing) {
             return NULL;
@@ -651,7 +655,7 @@ S_static_meth_top(CFCFunction *func) {
         char *error = NULL;
         char *arg_parsing = S_gen_arg_parsing(param_list, 0, &error);
         if (error) {
-            CFCUtil_die("%s in %s", error, CFCFunction_full_func_sym(func));
+            CFCUtil_die("%s in %s", error, CFCFunction_get_name(func));
         }
         if (!arg_parsing) {
             return NULL;
@@ -696,7 +700,7 @@ S_gen_decrefs(CFCParamList *param_list, int first_tick) {
             continue;
         }
         const char *specifier = CFCType_get_specifier(type);
-        const char *var_name = CFCVariable_micro_sym(vars[i]);
+        const char *var_name = CFCVariable_get_name(vars[i]);
         if (strcmp(specifier, "cfish_String") == 0) {
             content = CFCUtil_cat(content, "    CFISH_DECREF(wrap_arg_",
                                   var_name, ".stringified);\n", NULL);
@@ -780,9 +784,9 @@ S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
-S_gen_constructor_trap(CFCFunction *init_func) {
+S_gen_constructor_trap(CFCFunction *init_func, CFCClass *invoker) {
     CFCParamList *param_list = CFCFunction_get_param_list(init_func);
-    const char *init_func_str = CFCFunction_full_func_sym(init_func);
+    char *init_func_str = CFCFunction_full_func_sym(init_func, invoker);
     char *arg_list = S_gen_trap_arg_list(param_list);
 
     const char pattern[] =
@@ -796,13 +800,14 @@ S_gen_constructor_trap(CFCFunction *init_func) {
                                     arg_list);
 
     FREEMEM(arg_list);
+    FREEMEM(init_func_str);
     return content;
 }
 
 char*
-S_gen_inert_func_trap(CFCFunction *func) {
+S_gen_inert_func_trap(CFCFunction *func, CFCClass *invoker) {
     CFCParamList *param_list = CFCFunction_get_param_list(func);
-    const char *func_sym = CFCFunction_full_func_sym(func);
+    char *func_sym = CFCFunction_full_func_sym(func, invoker);
     char *arg_list = S_gen_trap_arg_list(param_list);
 
     CFCType *return_type = CFCFunction_get_return_type(func);
@@ -837,6 +842,7 @@ S_gen_inert_func_trap(CFCFunction *func) {
 
     FREEMEM(arg_list);
     FREEMEM(maybe_retval);
+    FREEMEM(func_sym);
     return content;
 }
 
@@ -892,21 +898,21 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
-    char *trap_wrap  = S_gen_constructor_trap(init_func);
+    char *trap_wrap  = S_gen_constructor_trap(init_func, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
     const char *class_var  = CFCClass_full_class_var(invoker);
     const char *struct_sym = CFCClass_full_struct_sym(invoker);
-    const char *func_name  = CFCFunction_full_func_sym(init_func);
+    char *func_name = CFCFunction_full_func_sym(init_func, invoker);
     char *error = NULL;
     char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
     if (error) {
         CFCUtil_die("%s in constructor for %s", error,
-                    CFCClass_get_class_name(invoker));
+                    CFCClass_get_name(invoker));
     }
     if (!arg_parsing) {
         CFCUtil_die("Unexpected arg parsing error for %s",
-                    CFCClass_get_class_name(invoker));
+                    CFCClass_get_name(invoker));
     }
 
     char pattern[] =
@@ -923,6 +929,7 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym,
                                     arg_parsing, increfs, class_var,
                                     decrefs, func_name);
+    FREEMEM(func_name);
     FREEMEM(decrefs);
     FREEMEM(increfs);
     FREEMEM(arg_parsing);
@@ -934,8 +941,8 @@ char*
 CFCPyFunc_inert_wrapper(CFCFunction *func, struct CFCClass *invoker) {
     CFCParamList *param_list  = CFCFunction_get_param_list(func);
     CFCType      *return_type = CFCFunction_get_return_type(func);
-    const char   *func_sym    = CFCFunction_full_func_sym(func);
-    char *func_trap  = S_gen_inert_func_trap(func);
+    char *func_sym   = CFCFunction_full_func_sym(func, invoker);
+    char *func_trap  = S_gen_inert_func_trap(func, invoker);
     char *top        = S_static_meth_top(func);
     char *increfs    = S_gen_arg_increfs(param_list, 0);
     char *decrefs    = S_gen_trap_decrefs(param_list, 0);
@@ -959,6 +966,7 @@ CFCPyFunc_inert_wrapper(CFCFunction *func, struct CFCClass *invoker) {
     FREEMEM(increfs);
     FREEMEM(top);
     FREEMEM(func_trap);
+    FREEMEM(func_sym);
     return wrapper;
 }
 
@@ -968,7 +976,7 @@ CFCPyMethod_pymethoddef(CFCMethod *method, CFCClass *invoker) {
     const char *flags = CFCParamList_num_vars(param_list) == 1
                         ? "METH_NOARGS"
                         : "METH_KEYWORDS|METH_VARARGS";
-    const char *micro_sym = CFCSymbol_micro_sym((CFCSymbol*)method);
+    const char *micro_sym = CFCSymbol_get_name((CFCSymbol*)method);
     char *meth_sym = CFCMethod_full_method_sym(method, invoker);
     char pattern[] =
         "{\"%s\", (PyCFunction)S_%s, %s, NULL},";
@@ -983,10 +991,12 @@ CFCPyFunc_static_pymethoddef(CFCFunction *func, CFCClass *invoker) {
     const char *flags = CFCParamList_num_vars(param_list) == 0
                         ? "METH_STATIC|METH_NOARGS"
                         : "METH_STATIC|METH_KEYWORDS|METH_VARARGS";
-    const char *micro_sym = CFCSymbol_micro_sym((CFCSymbol*)func);
-    const char *func_sym = CFCFunction_full_func_sym(func);
+    const char *micro_sym = CFCSymbol_get_name((CFCSymbol*)func);
+    char       *func_sym  = CFCFunction_full_func_sym(func, invoker);
     char pattern[] =
         "{\"%s\", (PyCFunction)S_%s, %s, NULL},";
-    return CFCUtil_sprintf(pattern, micro_sym, func_sym, flags);
+    char *retval = CFCUtil_sprintf(pattern, micro_sym, func_sym, flags);
+    FREEMEM(func_sym);
+    return retval;
 }
 
