@@ -31,10 +31,7 @@
 #include "CFCHierarchy.h"
 #include "CFCUtil.h"
 #include "CFCPyClass.h"
-//#include "CFCPyFunc.h"
 #include "CFCPyMethod.h"
-//#include "CFCPyConstructor.h"
-//#include "CFCPyTypeMap.h"
 #include "CFCBindCore.h"
 
 struct CFCPython {
@@ -44,21 +41,19 @@ struct CFCPython {
     char *footer;
 };
 
+void
+S_destroy(CFCPython *self);
+
 static const CFCMeta CFCPYTHON_META = {
     "Clownfish::CFC::Binding::Python",
     sizeof(CFCPython),
-    (CFCBase_destroy_t)CFCPython_destroy
+    (CFCBase_destroy_t)S_destroy
 };
 
 CFCPython*
 CFCPython_new(CFCHierarchy *hierarchy) {
-    CFCPython *self = (CFCPython*)CFCBase_allocate(&CFCPYTHON_META);
-    return CFCPython_init(self, hierarchy);
-}
-
-CFCPython*
-CFCPython_init(CFCPython *self, CFCHierarchy *hierarchy) {
     CFCUTIL_NULL_CHECK(hierarchy);
+    CFCPython *self = (CFCPython*)CFCBase_allocate(&CFCPYTHON_META);
     self->hierarchy  = (CFCHierarchy*)CFCBase_incref((CFCBase*)hierarchy);
     self->header     = CFCUtil_strdup("");
     self->footer     = CFCUtil_strdup("");
@@ -66,7 +61,7 @@ CFCPython_init(CFCPython *self, CFCHierarchy *hierarchy) {
 }
 
 void
-CFCPython_destroy(CFCPython *self) {
+S_destroy(CFCPython *self) {
     CFCBase_decref((CFCBase*)self->hierarchy);
     FREEMEM(self->header);
     FREEMEM(self->footer);
@@ -582,5 +577,4 @@ CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *d
     S_write_hostdefs(self);
     S_write_module_file(self, parcel, dest);
 }
-
 

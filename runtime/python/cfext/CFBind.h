@@ -17,25 +17,28 @@
 #ifndef H_CFISH_PY_CFBIND
 #define H_CFISH_PY_CFBIND 1
 
-#include "Clownfish/Obj.h"
-#include "Clownfish/Class.h"
-#include "Clownfish/String.h"
-#include "Clownfish/Err.h"
-#include "Python.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "cfish_platform.h"
+#include "Python.h"
+#include "Clownfish/Obj.h"
+
+struct cfish_Class;
+struct cfish_String;
+
+#include "Clownfish/Class.h"
 
 /** Wrap the current state of Python's sys.exc_info in a Clownfish Err and
   * throw it.
   *
   * One refcount of `mess` will be consumed by this function.
-  * 
+  *
   * TODO: Leave the original exception intact.
   */
 void
-CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess);
+CFBind_reraise_pyerr(struct cfish_Class *err_klass, struct cfish_String *mess);
 
 /** Perform recursive conversion of Clownfish objects to Python, returning an
   * incremented PyObject.

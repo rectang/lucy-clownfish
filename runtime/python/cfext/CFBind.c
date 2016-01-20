@@ -18,39 +18,32 @@
 #define C_CFISH_CLASS
 #define C_CFISH_METHOD
 #define C_CFISH_ERR
-#define C_CFISH_LOCKFREEREGISTRY
 
-#include "Python.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <setjmp.h>
 
+#include "charmony.h"
 #include "CFBind.h"
 
 #include "Clownfish/Obj.h"
 #include "Clownfish/Class.h"
-#include "Clownfish/Method.h"
-#include "Clownfish/Err.h"
-#include "Clownfish/Util/Atomic.h"
-#include "Clownfish/Util/Memory.h"
-#include "Clownfish/Util/StringHelper.h"
-#include "Clownfish/String.h"
-#include "Clownfish/Vector.h"
-#include "Clownfish/Hash.h"
-#include "Clownfish/HashIterator.h"
-#include "Clownfish/ByteBuf.h"
 #include "Clownfish/Blob.h"
 #include "Clownfish/Boolean.h"
+#include "Clownfish/ByteBuf.h"
+#include "Clownfish/Err.h"
+#include "Clownfish/Hash.h"
+#include "Clownfish/Method.h"
 #include "Clownfish/Num.h"
-#include "Clownfish/Num.h"
-#include "Clownfish/LockFreeRegistry.h"
+#include "Clownfish/String.h"
+#include "Clownfish/TestHarness/TestUtils.h"
+#include "Clownfish/Util/Memory.h"
+#include "Clownfish/Vector.h"
 
 static bool Err_initialized;
 
 static PyTypeObject*
 S_get_cached_py_type(cfish_Class *klass);
 
-/******************************** Utility **************************************/
+/**** Utility **************************************************************/
 
 static bool
 S_py_obj_is_a(PyObject *py_obj, cfish_Class *klass) {
@@ -899,37 +892,34 @@ CFBind_run_trapped(CFISH_Err_Attempt_t func, void *vcontext, int ret_type) {
     }
 }
 
-/******************************** Obj **************************************/
+/**** refcounting **********************************************************/
 
 uint32_t
 cfish_get_refcount(void *vself) {
-    cfish_Obj *self = (cfish_Obj*)vself;
-    return Py_REFCNT(self);
+    return Py_REFCNT(vself);
 }
 
 cfish_Obj*
 cfish_inc_refcount(void *vself) {
-    cfish_Obj *self = (cfish_Obj*)vself;
-    Py_INCREF(self);
-    return self;
+    Py_INCREF(vself);
+    return (cfish_Obj*)vself;
 }
 
 uint32_t
 cfish_dec_refcount(void *vself) {
-    cfish_Obj *self = (cfish_Obj*)vself;
-    uint32_t modified_refcount = Py_REFCNT(self);
-    Py_DECREF(self);
+    uint32_t modified_refcount = Py_REFCNT(vself);
+    Py_DECREF(vself);
     return modified_refcount;
 }
+
+/**** Obj ******************************************************************/
 
 void*
 CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
     return self;
 }
 
-
-
-/******************************* Class *************************************/
+/**** Class ****************************************************************/
 
 void
 CFBind_class_bootstrap_hook1(cfish_Class *self) {
@@ -1014,17 +1004,6 @@ CFISH_Class_Init_Obj_IMP(cfish_Class *self, void *allocation) {
     return obj;
 }
 
-/* Foster_Obj() is only needed under hosts where host object allocation and
- * Clownfish object allocation are separate.  When Clownfish is used under
- * Python, Clownfish objects *are* Python objects. */
-cfish_Obj*
-CFISH_Class_Foster_Obj_IMP(cfish_Class *self, void *host_obj) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_UNUSED_VAR(host_obj);
-    CFISH_THROW(CFISH_ERR, "Unimplemented");
-    CFISH_UNREACHABLE_RETURN(cfish_Obj*);
-}
-
 void
 cfish_Class_register_with_host(cfish_Class *singleton, cfish_Class *parent) {
     CFISH_UNUSED_VAR(singleton);
@@ -1044,21 +1023,14 @@ cfish_Class_find_parent_class(cfish_String *class_name) {
     CFISH_UNREACHABLE_RETURN(cfish_String*);
 }
 
-void*
-CFISH_Class_To_Host_IMP(cfish_Class *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
-}
-
-/******************************* Method ************************************/
+/**** Method ***************************************************************/
 
 cfish_String*
 CFISH_Method_Host_Name_IMP(cfish_Method *self) {
     return (cfish_String*)CFISH_INCREF(self->name);
 }
 
-/******************************** Err **************************************/
+/**** Err ******************************************************************/
 
 /* TODO: Thread safety */
 static cfish_Err *current_error;
@@ -1098,16 +1070,9 @@ cfish_Err_do_throw(cfish_Err *error) {
     }
 }
 
-void*
-CFISH_Err_To_Host_IMP(cfish_Err *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
-}
-
 void
 cfish_Err_throw_mess(cfish_Class *klass, cfish_String *message) {
-    CFISH_UNUSED_VAR(klass);
+    CFISH_UNUSED_VAR(klass); // TODO use klass
     cfish_Err *err = cfish_Err_new(message);
     cfish_Err_do_throw(err);
 }
@@ -1128,7 +1093,7 @@ cfish_Err_trap(CFISH_Err_Attempt_t routine, void *context) {
 
     if (!setjmp(env)) {
         routine(context);
-    }   
+    }
 
     current_env = prev_env;
 
@@ -1137,7 +1102,27 @@ cfish_Err_trap(CFISH_Err_Attempt_t routine, void *context) {
     return error;
 }
 
-/******************************* to host ***********************************/
+/**** TestUtils ************************************************************/
+
+void*
+cfish_TestUtils_clone_host_runtime() {
+    CFISH_THROW(CFISH_ERR, "TODO");
+    CFISH_UNREACHABLE_RETURN(void*);
+}
+
+void
+cfish_TestUtils_set_host_runtime(void *runtime) {
+    CFISH_UNUSED_VAR(runtime);
+    CFISH_THROW(CFISH_ERR, "TODO");
+}
+
+void
+cfish_TestUtils_destroy_host_runtime(void *runtime) {
+    CFISH_UNUSED_VAR(runtime);
+    CFISH_THROW(CFISH_ERR, "TODO");
+}
+
+/**** To_Host methods ******************************************************/
 
 void*
 CFISH_Str_To_Host_IMP(cfish_String *self) {
@@ -1147,14 +1132,14 @@ CFISH_Str_To_Host_IMP(cfish_String *self) {
 }
 
 void*
-CFISH_BB_To_Host_IMP(cfish_ByteBuf *self) {
+CFISH_Blob_To_Host_IMP(cfish_Blob *self) {
     CFISH_UNUSED_VAR(self);
     CFISH_THROW(CFISH_ERR, "TODO");
     CFISH_UNREACHABLE_RETURN(void*);
 }
 
 void*
-CFISH_Blob_To_Host_IMP(cfish_Blob *self) {
+CFISH_BB_To_Host_IMP(cfish_ByteBuf *self) {
     CFISH_UNUSED_VAR(self);
     CFISH_THROW(CFISH_ERR, "TODO");
     CFISH_UNREACHABLE_RETURN(void*);
@@ -1195,28 +1180,3 @@ CFISH_Bool_To_Host_IMP(cfish_Boolean *self) {
     CFISH_UNREACHABLE_RETURN(void*);
 }
 
-/************************** LockFreeRegistry *******************************/
-
-void*
-CFISH_LFReg_To_Host_IMP(cfish_LockFreeRegistry *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
-}
-
-/**************************** TestUtils **********************************/
-
-void*
-cfish_TestUtils_clone_host_runtime() {
-    return NULL;
-}
-
-void
-cfish_TestUtils_set_host_runtime(void *runtime) {
-    CFISH_UNUSED_VAR(runtime);
-}
-
-void
-cfish_TestUtils_destroy_host_runtime(void *runtime) {
-    CFISH_UNUSED_VAR(runtime);
-}

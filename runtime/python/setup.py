@@ -22,7 +22,6 @@ import distutils.ccompiler
 import os
 import glob
 import platform
-import re
 import shutil
 import subprocess
 import sysconfig
@@ -47,7 +46,7 @@ compiler_type = distutils.ccompiler.get_default_compiler()
 # out of distutils, but the member variable has been in the same place for a
 # long time, so violating encapsulation may be ok.
 compiler_name = " ".join(compiler.compiler)
-make_command = "make"
+make_command = "make" # TODO portability
 
 BASE_DIR        = os.path.abspath(os.path.join(os.pardir, os.pardir))
 PARENT_DIR      = os.path.abspath(os.pardir)
@@ -68,6 +67,8 @@ BINDING_FILE         = '_clownfish.c'
 
 c_filepaths = [BINDING_FILE]
 paths_to_clean = [
+    CHARMONIZER_EXE_PATH,
+    CHARMONY_H_PATH,
     '_charm*',
     BINDING_FILE,
 ]
@@ -147,7 +148,8 @@ class libclownfish(_Command):
 class my_clean(_clean):
     def run(self):
         _clean.run(self)
-        subprocess.check_call([make_command, 'distclean'])
+        if os.path.isfile("Makefile"):
+            subprocess.check_call([make_command, 'distclean'])
         for elem in paths_to_clean:
             for path in glob.glob(elem):
                 print("removing " + path)
@@ -161,6 +163,33 @@ class my_build(_build):
         self.run_command('charmony')
         self.run_command('libclownfish')
         _build.run(self)
+
+class test(_Command):
+    description = "Run unit tests."
+    user_options = []
+    def initialize_options(self):
+        pass
+    def finalize_options(self):
+        pass
+    def ext_build_dir(self):
+        """Returns the build directory for compiled extensions"""
+        pattern = "lib.{platform}-{version[0]}.{version[1]}"
+        dirname = pattern.format(platform=sysconfig.get_platform(),
+                                 version=sys.version_info)
+        return os.path.join('build', dirname)
+
+    def run(self):
+        self.run_command('build')
+        orig_sys_path = sys.path[:]
+        sys.path.append(self.ext_build_dir())
+
+        loader = unittest.TestLoader()
+        tests = loader.discover("test")
+        test_runner = unittest.runner.TextTestRunner()
+        test_runner.run(tests)
+
+        # restore sys.path
+        sys.path = orig_sys_path
 
 clownfish_extension = Extension('clownfish._clownfish',
                                  include_dirs = [
@@ -185,6 +214,7 @@ setup(name = 'clownfish',
           'clean': my_clean,
           'charmony': charmony,
           'libclownfish': libclownfish,
+          'test': test,
       },
       package_dir={'': 'src'},
       ext_modules = [clownfish_extension])
