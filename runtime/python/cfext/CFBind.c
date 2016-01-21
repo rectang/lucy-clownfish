@@ -19,6 +19,8 @@
 #define C_CFISH_METHOD
 #define C_CFISH_ERR
 
+#include <setjmp.h>
+
 #include "charmony.h"
 #include "CFBind.h"
 
@@ -40,23 +42,20 @@
 
 uint32_t
 cfish_get_refcount(void *vself) {
-    CFISH_UNUSED_VAR(vself);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(uint32_t);
+    return Py_REFCNT(vself);
 }
 
 cfish_Obj*
 cfish_inc_refcount(void *vself) {
-    CFISH_UNUSED_VAR(vself);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(cfish_Obj*);
+    Py_INCREF(vself);
+    return (cfish_Obj*)vself;
 }
 
 uint32_t
 cfish_dec_refcount(void *vself) {
-    CFISH_UNUSED_VAR(vself);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(uint32_t);
+    uint32_t modified_refcount = Py_REFCNT(vself);
+    Py_DECREF(vself);
+    return modified_refcount;
 }
 
 /**** Obj ******************************************************************/
