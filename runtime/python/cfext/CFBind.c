@@ -1126,57 +1126,85 @@ cfish_TestUtils_destroy_host_runtime(void *runtime) {
 
 void*
 CFISH_Str_To_Host_IMP(cfish_String *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    const char *ptr = CFISH_Str_Get_Ptr8(self);
+    size_t size = CFISH_Str_Get_Size(self);
+    return PyUnicode_FromStringAndSize(ptr, size);
 }
 
 void*
 CFISH_Blob_To_Host_IMP(cfish_Blob *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    const char *buf = CFISH_Blob_Get_Buf(self);
+    size_t size = CFISH_Blob_Get_Size(self);
+    return PyBytes_FromStringAndSize(buf, size);
 }
 
 void*
 CFISH_BB_To_Host_IMP(cfish_ByteBuf *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    CFISH_BB_To_Host_t super_to_host
+        = CFISH_SUPER_METHOD_PTR(CFISH_BYTEBUF, CFISH_BB_To_Host);
+    return super_to_host(self);
 }
 
 void*
 CFISH_Vec_To_Host_IMP(cfish_Vector *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    uint32_t num_elems = CFISH_Vec_Get_Size(self);
+    PyObject *list = PyList_New(num_elems);
+
+    // Iterate over vector items.
+    for (uint32_t i = 0; i < num_elems; i++) {
+        cfish_Obj *val = CFISH_Vec_Fetch(self, i);
+        PyObject *item = CFBind_cfish_to_py(val);
+        PyList_SET_ITEM(list, i, item);
+    }
+
+    return list;
 }
 
 void*
 CFISH_Hash_To_Host_IMP(cfish_Hash *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    PyObject *dict = PyDict_New();
+
+    // Iterate over key-value pairs.
+    cfish_HashIterator *iter = cfish_HashIter_new(self);
+    while (CFISH_HashIter_Next(iter)) {
+        cfish_String *key = (cfish_String*)CFISH_HashIter_Get_Key(iter);
+        if (!cfish_Obj_is_a((cfish_Obj*)key, CFISH_STRING)) {
+            CFISH_THROW(CFISH_ERR, "Non-string key: %o",
+                        cfish_Obj_get_class_name((cfish_Obj*)key));
+        }
+        size_t size = CFISH_Str_Get_Size(key);
+        const char *ptr = CFISH_Str_Get_Ptr8(key);
+        PyObject *py_key = PyUnicode_FromStringAndSize(ptr, size);
+        PyObject *py_val = CFBind_cfish_to_py(CFISH_HashIter_Get_Value(iter));
+        PyDict_SetItem(dict, py_key, py_val);
+        Py_DECREF(py_key);
+        Py_DECREF(py_val);
+    }
+    CFISH_DECREF(iter);
+
+    return dict;
 }
 
 void*
 CFISH_Float_To_Host_IMP(cfish_Float *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    return PyFloat_FromDouble(CFISH_Float_Get_Value(self));
 }
 
 void*
 CFISH_Int_To_Host_IMP(cfish_Integer *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    int64_t num = CFISH_Int_Get_Value(self);
+    return PyLong_FromLongLong(num);
 }
 
 void*
 CFISH_Bool_To_Host_IMP(cfish_Boolean *self) {
-    CFISH_UNUSED_VAR(self);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(void*);
+    if (self == CFISH_TRUE) {
+        Py_INCREF(Py_True);
+        return Py_True;
+    }
+    else {
+        Py_INCREF(Py_False);
+        return Py_False;
+    }
 }
 

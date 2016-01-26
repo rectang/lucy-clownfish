@@ -40,29 +40,33 @@ struct cfish_String;
 void
 CFBind_reraise_pyerr(struct cfish_Class *err_klass, struct cfish_String *mess);
 
-/** Perform recursive conversion of Clownfish objects to Python, returning an
-  * incremented PyObject.
-  *
-  *     String   -> string
-  *     Vector   -> list
-  *     Hash     -> dict
-  *     NULL     -> None
-  *     ByteBuf  -> bytes
-  *     BoolNum  -> bool
-  *     IntNum   -> int
-  *     FloatNum -> float
-  * 
-  * Anything else will be left intact, since Clownfish objects are valid Python
-  * objects.
+/** Null-safe invocation of Obj_To_Host.
   */
-PyObject*
-CFBind_cfish_to_py(cfish_Obj *obj);
+static CFISH_INLINE PyObject*
+CFBind_cfish_to_py(struct cfish_Obj *obj) {
+    if (obj != NULL) {
+        return (PyObject*)CFISH_Obj_To_Host(obj);
+    }
+    else {
+        Py_RETURN_NONE;
+    }
+}
 
-/* Perform the same conversion as `CFBind_cfish_to_py`, but ensure that the
- * result is refcount-neutral, taking ownership of a refcount from `obj`.
- */
-PyObject*
-CFBind_cfish_to_py_zeroref(cfish_Obj *obj);
+/** Perform the same conversion as `CFBind_cfish_to_py`, but ensure that the
+  * result is refcount-neutral, decrementing a refcount from `obj` and passing
+  * it along.
+  */
+static CFISH_INLINE PyObject*
+CFBind_cfish_to_py_zeroref(struct cfish_Obj *obj) {
+    if (obj != NULL) {
+        PyObject *result = (PyObject*)CFISH_Obj_To_Host(obj);
+        CFISH_DECREF(obj);
+        return result;
+    }
+    else {
+        return Py_None;
+    }
+}
 
 /** Perform recursive conversion of Python objects to Clownfish, return an
   * incremented Clownfish Obj.
