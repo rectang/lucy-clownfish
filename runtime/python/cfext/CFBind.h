@@ -40,6 +40,102 @@ struct cfish_String;
 void
 CFBind_reraise_pyerr(struct cfish_Class *err_klass, struct cfish_String *mess);
 
+typedef union {
+    void*    ptr;
+    int8_t   int8_t_;
+    int16_t  int16_t_;
+    int32_t  int32_t_;
+    int64_t  int64_t_;
+    uint8_t  uint8_t_;
+    uint16_t uint16_t_;
+    uint32_t uint32_t_;
+    uint64_t uint64_t_;
+    int      char_;
+    short    short_;
+    int      int_;
+    long     long_;
+    size_t   size_t_;
+    bool     bool_;
+    float    float_;
+    double   double_;
+} cfbind_any_t;
+
+typedef struct CFBindTrapContext {
+    cfbind_any_t  retval;
+    cfbind_any_t *args;
+    void         *decrefs;
+    int           num_decrefs;
+} CFBindTrapContext;
+
+enum {
+    CFBIND_TYPE_reserved,
+    CFBIND_TYPE_void,
+    CFBIND_TYPE_int8_t,
+    CFBIND_TYPE_int16_t,
+    CFBIND_TYPE_int32_t,
+    CFBIND_TYPE_int64_t,
+    CFBIND_TYPE_uint8_t,
+    CFBIND_TYPE_uint16_t,
+    CFBIND_TYPE_uint32_t,
+    CFBIND_TYPE_uint64_t,
+    CFBIND_TYPE_char,
+    CFBIND_TYPE_short,
+    CFBIND_TYPE_int,
+    CFBIND_TYPE_long,
+    CFBIND_TYPE_size_t,
+    CFBIND_TYPE_bool,
+    CFBIND_TYPE_float,
+    CFBIND_TYPE_double,
+    CFBIND_TYPE_obj,
+    CFBIND_TYPE_inc_obj,
+    CFBIND_TYPE_raw_obj
+};
+
+#define CFBIND_TYPE_MASK 0x1F
+
+PyObject*
+CFBind_run_trapped(void(func)(void*), void *vcontext,
+                   int retval_type);
+
+#define CFBIND_RUN_TRAPPED_void(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_void)
+#define CFBIND_RUN_TRAPPED_int8_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int8_t)
+#define CFBIND_RUN_TRAPPED_int16_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int16_t)
+#define CFBIND_RUN_TRAPPED_int32_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int32_t)
+#define CFBIND_RUN_TRAPPED_int64_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int64_t)
+#define CFBIND_RUN_TRAPPED_uint8_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint8_t)
+#define CFBIND_RUN_TRAPPED_uint16_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint16_t)
+#define CFBIND_RUN_TRAPPED_uint32_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint32_t)
+#define CFBIND_RUN_TRAPPED_uint64_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint64_t)
+#define CFBIND_RUN_TRAPPED_char(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_char)
+#define CFBIND_RUN_TRAPPED_short(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_short)
+#define CFBIND_RUN_TRAPPED_long(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_long)
+#define CFBIND_RUN_TRAPPED_size_t(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_size_t)
+#define CFBIND_RUN_TRAPPED_bool(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_bool)
+#define CFBIND_RUN_TRAPPED_float(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_float)
+#define CFBIND_RUN_TRAPPED_double(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_double)
+#define CFBIND_RUN_TRAPPED_obj(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_obj)
+#define CFBIND_RUN_TRAPPED_inc_obj(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_inc_obj)
+#define CFBIND_RUN_TRAPPED_raw_obj(func, vcontext) \
+    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_raw_obj)
+
 /** Null-safe invocation of Obj_To_Host.
   */
 static CFISH_INLINE PyObject*
@@ -97,99 +193,6 @@ CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass);
 void
 CFBind_assoc_py_types(cfish_Class ***klass_handles, PyTypeObject **py_types,
                       int32_t num_items);
-
-typedef union {
-    void*    ptr;
-    int8_t   int8_t_;
-    int16_t  int16_t_;
-    int32_t  int32_t_;
-    int64_t  int64_t_;
-    uint8_t  uint8_t_;
-    uint16_t uint16_t_;
-    uint32_t uint32_t_;
-    uint64_t uint64_t_;
-    int      char_;
-    short    short_;
-    int      int_;
-    long     long_;
-    size_t   size_t_;
-    bool     bool_;
-    float    float_;
-    double   double_;
-} cfbind_any_t;
-
-typedef struct CFBindTrapContext {
-    cfbind_any_t  retval;
-    cfbind_any_t *args;
-    void         *decrefs;
-    int           num_decrefs;
-} CFBindTrapContext;
-
-#define CFBIND_TYPE_void     1
-#define CFBIND_TYPE_int8_t   2
-#define CFBIND_TYPE_int16_t  3
-#define CFBIND_TYPE_int32_t  4
-#define CFBIND_TYPE_int64_t  5
-#define CFBIND_TYPE_uint8_t  6
-#define CFBIND_TYPE_uint16_t 7
-#define CFBIND_TYPE_uint32_t 8
-#define CFBIND_TYPE_uint64_t 9
-#define CFBIND_TYPE_char     10
-#define CFBIND_TYPE_short    11
-#define CFBIND_TYPE_int      12
-#define CFBIND_TYPE_long     13
-#define CFBIND_TYPE_size_t   14
-#define CFBIND_TYPE_bool     15
-#define CFBIND_TYPE_float    16
-#define CFBIND_TYPE_double   17
-#define CFBIND_TYPE_obj      18
-#define CFBIND_TYPE_inc_obj  19
-#define CFBIND_TYPE_raw_obj  20
-
-#define CFBIND_TYPE_MASK 0x1F
-
-PyObject*
-CFBind_run_trapped(CFISH_Err_Attempt_t func, void *vcontext,
-                   int retval_type);
-
-#define CFBIND_RUN_TRAPPED_void(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_void)
-#define CFBIND_RUN_TRAPPED_int8_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int8_t)
-#define CFBIND_RUN_TRAPPED_int16_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int16_t)
-#define CFBIND_RUN_TRAPPED_int32_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int32_t)
-#define CFBIND_RUN_TRAPPED_int64_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_int64_t)
-#define CFBIND_RUN_TRAPPED_uint8_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint8_t)
-#define CFBIND_RUN_TRAPPED_uint16_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint16_t)
-#define CFBIND_RUN_TRAPPED_uint32_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint32_t)
-#define CFBIND_RUN_TRAPPED_uint64_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_uint64_t)
-#define CFBIND_RUN_TRAPPED_char(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_char)
-#define CFBIND_RUN_TRAPPED_short(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_short)
-#define CFBIND_RUN_TRAPPED_long(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_long)
-#define CFBIND_RUN_TRAPPED_size_t(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_size_t)
-#define CFBIND_RUN_TRAPPED_bool(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_bool)
-#define CFBIND_RUN_TRAPPED_float(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_float)
-#define CFBIND_RUN_TRAPPED_double(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_double)
-#define CFBIND_RUN_TRAPPED_obj(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_obj)
-#define CFBIND_RUN_TRAPPED_inc_obj(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_inc_obj)
-#define CFBIND_RUN_TRAPPED_raw_obj(func, vcontext) \
-    CFBind_run_trapped(func, vcontext, CFBIND_TYPE_raw_obj)
 
 typedef struct CFBindArg {
     cfish_Class *klass;

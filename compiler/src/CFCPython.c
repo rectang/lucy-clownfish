@@ -72,14 +72,14 @@ void
 CFCPython_set_header(CFCPython *self, const char *header) {
     CFCUTIL_NULL_CHECK(header);
     free(self->header);
-    self->header = CFCUtil_sprintf("/* %s */", header);
+    self->header = CFCUtil_make_c_comment(header);
 }
 
 void
 CFCPython_set_footer(CFCPython *self, const char *footer) {
     CFCUTIL_NULL_CHECK(footer);
     free(self->footer);
-    self->footer = CFCUtil_strdup(footer);
+    self->footer = CFCUtil_make_c_comment(footer);
 }
 
 static void

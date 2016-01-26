@@ -31,6 +31,7 @@
 #include "Clownfish/ByteBuf.h"
 #include "Clownfish/Err.h"
 #include "Clownfish/Hash.h"
+#include "Clownfish/HashIterator.h"
 #include "Clownfish/Method.h"
 #include "Clownfish/Num.h"
 #include "Clownfish/String.h"
@@ -85,109 +86,67 @@ CFBind_reraise_pyerr(cfish_Class *err_klass, cfish_String *mess) {
     cfish_Err_throw_mess(err_klass, new_mess);
 }
 
-static PyObject*
-S_cfish_array_to_python_list(cfish_Vector *vec) {
-    uint32_t num_elems = CFISH_Vec_Get_Size(vec);
-    PyObject *list = PyList_New(num_elems);
-
-    // Iterate over array elems.
-    for (uint32_t i = 0; i < num_elems; i++) {
-        cfish_Obj *val = CFISH_Vec_Fetch(vec, i);
-        PyObject *item = CFBind_cfish_to_py(val);
-        PyList_SET_ITEM(list, i, item);
-    }
-
-    return list;
-}
-
-static PyObject*
-S_cfish_hash_to_python_dict(cfish_Hash *hash) {
-    PyObject *dict = PyDict_New();
-
-    // Iterate over key-value pairs.
-    cfish_HashIterator *iter = cfish_HashIter_new(hash);
-    while (CFISH_HashIter_Next(iter)) {
-        cfish_String *key = (cfish_String*)CFISH_HashIter_Get_Key(iter);
-        if (!cfish_Obj_is_a((cfish_Obj*)key, CFISH_STRING)) {
-            CFISH_THROW(CFISH_ERR, "Non-string key: %o",
-                        cfish_Obj_get_class_name((cfish_Obj*)key));
-        }
-        size_t size = CFISH_Str_Get_Size(key);
-        const char *ptr = CFISH_Str_Get_Ptr8(key);
-        PyObject *py_key = PyUnicode_FromStringAndSize(ptr, size);
-        PyObject *py_val = CFBind_cfish_to_py(CFISH_HashIter_Get_Value(iter));
-        PyDict_SetItem(dict, py_key, py_val);
-        Py_DECREF(py_key);
-        Py_DECREF(py_val);
-    }
-    CFISH_DECREF(iter);
-
-    return dict;
-}
-
-static PyObject*
-S_cfish_to_py(cfish_Obj *obj, bool zeroref) {
-    PyObject *retval = NULL;
-
-    if (obj == NULL) {
-        Py_INCREF(Py_None);
-        retval = Py_None;
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_STRING)) {
-        const char *ptr = CFISH_Str_Get_Ptr8((cfish_String*)obj);
-        size_t size = CFISH_Str_Get_Size((cfish_String*)obj);
-        retval = PyUnicode_FromStringAndSize(ptr, size);
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_BYTEBUF)) {
-        char *buf = CFISH_BB_Get_Buf((cfish_ByteBuf*)obj);
-        size_t size = CFISH_BB_Get_Size((cfish_ByteBuf*)obj);
-        retval = PyBytes_FromStringAndSize(buf, size);
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_VECTOR)) {
-        retval = S_cfish_array_to_python_list((cfish_Vector*)obj);
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_HASH)) {
-        retval = S_cfish_hash_to_python_dict((cfish_Hash*)obj);
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_FLOAT)) {
-        retval = PyFloat_FromDouble(CFISH_Float_Get_Value((cfish_Float*)obj));
-    }
-    else if (obj == (cfish_Obj*)CFISH_TRUE) {
-        Py_INCREF(Py_True);
-        retval = Py_True;
-    }
-    else if (obj == (cfish_Obj*)CFISH_FALSE) {
-        Py_INCREF(Py_False);
-        retval = Py_False;
-    }
-    else if (cfish_Obj_is_a(obj, CFISH_INTEGER)) {
-        int64_t num = CFISH_Int_Get_Value((cfish_Integer*)obj);
-        retval = PyLong_FromLongLong(num);
-    }
-    else {
-        if (zeroref) {
-            retval = (PyObject*)obj;
-            zeroref = false;
-        }
-        else {
-            retval = (PyObject*)CFISH_INCREF(obj);
-        }
-    }
-
-    if (zeroref) {
-        CFISH_DECREF(obj);
-    }
-    return retval;
-}
-
 PyObject*
-CFBind_cfish_to_py(cfish_Obj *obj) {
-    return S_cfish_to_py(obj, false);
-}
-
-PyObject*
-CFBind_cfish_to_py_zeroref(cfish_Obj *obj) {
-    return S_cfish_to_py(obj, true);
+CFBind_run_trapped(CFISH_Err_Attempt_t func, void *vcontext, int ret_type) {
+    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;
+    cfish_Err *err = cfish_Err_trap(func, context);
+    for (int32_t i = 0, max = context->num_decrefs; i < max; i++) {
+        cfish_Obj **decrefs = (cfish_Obj**)context->decrefs;
+        CFISH_DECREF(decrefs[i]);
+    }
+    if (err != NULL) {
+        cfish_String *mess = CFISH_Err_Get_Mess(err);
+        char *utf8 = CFISH_Str_To_Utf8(mess);
+        // TODO: change error type.
+        PyErr_SetString(PyExc_RuntimeError, utf8);
+        free(utf8);
+        CFISH_DECREF(err);
+        return NULL;
+    }
+    switch (ret_type & CFBIND_TYPE_MASK) {
+        case CFBIND_TYPE_void:
+            Py_RETURN_NONE;
+        case CFBIND_TYPE_int8_t:
+            return PyLong_FromLong(context->retval.int8_t_);
+        case CFBIND_TYPE_int16_t:
+            return PyLong_FromLong(context->retval.int16_t_);
+        case CFBIND_TYPE_int32_t:
+            return PyLong_FromLong(context->retval.int32_t_);
+        case CFBIND_TYPE_int64_t:
+            return PyLong_FromLongLong(context->retval.int64_t_);
+        case CFBIND_TYPE_uint8_t:
+            return PyLong_FromUnsignedLong(context->retval.uint8_t_);
+        case CFBIND_TYPE_uint16_t:
+            return PyLong_FromUnsignedLong(context->retval.uint16_t_);
+        case CFBIND_TYPE_uint32_t:
+            return PyLong_FromUnsignedLong(context->retval.uint32_t_);
+        case CFBIND_TYPE_uint64_t:
+            return PyLong_FromUnsignedLongLong(context->retval.uint64_t_);
+        case CFBIND_TYPE_char:
+            return PyLong_FromLong(context->retval.char_);
+        case CFBIND_TYPE_short:
+            return PyLong_FromLong(context->retval.short_);
+        case CFBIND_TYPE_long:
+            return PyLong_FromLong(context->retval.long_);
+        case CFBIND_TYPE_size_t:
+            return PyLong_FromSize_t(context->retval.size_t_);
+        case CFBIND_TYPE_bool:
+            return PyBool_FromLong(context->retval.bool_);
+        case CFBIND_TYPE_float:
+            return PyFloat_FromDouble(context->retval.float_);
+        case CFBIND_TYPE_double:
+            return PyFloat_FromDouble(context->retval.double_);
+        case CFBIND_TYPE_obj:
+            return CFBind_cfish_to_py_zeroref((cfish_Obj*)context->retval.ptr);
+        case CFBIND_TYPE_inc_obj:
+            return CFBind_cfish_to_py((cfish_Obj*)context->retval.ptr);
+        case CFBIND_TYPE_raw_obj:
+            return (PyObject*)context->retval.ptr;
+        default:
+            PyErr_Format(PyExc_RuntimeError, "Unexpected CFBIND_TYPE: %d",
+                         ret_type);
+            return NULL;
+    }
 }
 
 static cfish_Vector*
@@ -826,69 +785,6 @@ CFBind_assoc_py_types(cfish_Class ***klass_handles, PyTypeObject **py_types,
             free(revised->elems);
             free(revised);
         }
-    }
-}
-
-PyObject*
-CFBind_run_trapped(CFISH_Err_Attempt_t func, void *vcontext, int ret_type) {
-    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;
-    cfish_Err *err = cfish_Err_trap(func, context);
-    for (int32_t i = 0, max = context->num_decrefs; i < max; i++) {
-        cfish_Obj **decrefs = (cfish_Obj**)context->decrefs;
-        CFISH_DECREF(decrefs[i]);
-    }
-    if (err != NULL) {
-        cfish_String *mess = CFISH_Err_Get_Mess(err);
-        char *utf8 = CFISH_Str_To_Utf8(mess);
-        // TODO: change error type.
-        PyErr_SetString(PyExc_RuntimeError, utf8);
-        free(utf8);
-        CFISH_DECREF(err);
-        return NULL;
-    }
-    switch (ret_type & CFBIND_TYPE_MASK) {
-        case CFBIND_TYPE_void:
-            Py_RETURN_NONE;
-        case CFBIND_TYPE_int8_t:
-            return PyLong_FromLong(context->retval.int8_t_);
-        case CFBIND_TYPE_int16_t:
-            return PyLong_FromLong(context->retval.int16_t_);
-        case CFBIND_TYPE_int32_t:
-            return PyLong_FromLong(context->retval.int32_t_);
-        case CFBIND_TYPE_int64_t:
-            return PyLong_FromLongLong(context->retval.int64_t_);
-        case CFBIND_TYPE_uint8_t:
-            return PyLong_FromUnsignedLong(context->retval.uint8_t_);
-        case CFBIND_TYPE_uint16_t:
-            return PyLong_FromUnsignedLong(context->retval.uint16_t_);
-        case CFBIND_TYPE_uint32_t:
-            return PyLong_FromUnsignedLong(context->retval.uint32_t_);
-        case CFBIND_TYPE_uint64_t:
-            return PyLong_FromUnsignedLongLong(context->retval.uint64_t_);
-        case CFBIND_TYPE_char:
-            return PyLong_FromLong(context->retval.char_);
-        case CFBIND_TYPE_short:
-            return PyLong_FromLong(context->retval.short_);
-        case CFBIND_TYPE_long:
-            return PyLong_FromLong(context->retval.long_);
-        case CFBIND_TYPE_size_t:
-            return PyLong_FromSize_t(context->retval.size_t_);
-        case CFBIND_TYPE_bool:
-            return PyBool_FromLong(context->retval.bool_);
-        case CFBIND_TYPE_float:
-            return PyFloat_FromDouble(context->retval.float_);
-        case CFBIND_TYPE_double:
-            return PyFloat_FromDouble(context->retval.double_);
-        case CFBIND_TYPE_obj:
-            return S_cfish_to_py(context->retval.ptr, false);
-        case CFBIND_TYPE_inc_obj:
-            return S_cfish_to_py(context->retval.ptr, true);
-        case CFBIND_TYPE_raw_obj:
-            return (PyObject*)context->retval.ptr;
-        default:
-            PyErr_Format(PyExc_RuntimeError, "Unexpected CFBIND_TYPE: %d",
-                         ret_type);
-            return NULL;
     }
 }
 
