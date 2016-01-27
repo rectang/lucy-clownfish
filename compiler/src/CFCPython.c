@@ -24,14 +24,13 @@
 #define CFC_NEED_BASE_STRUCT_DEF
 #include "CFCBase.h"
 #include "CFCPython.h"
+#include "CFCPyClass.h"
+#include "CFCPyMethod.h"
 #include "CFCParcel.h"
 #include "CFCClass.h"
-#include "CFCFunction.h"
 #include "CFCMethod.h"
 #include "CFCHierarchy.h"
 #include "CFCUtil.h"
-#include "CFCPyClass.h"
-#include "CFCPyMethod.h"
 #include "CFCBindCore.h"
 
 struct CFCPython {
@@ -223,7 +222,7 @@ S_gen_callbacks(CFCPython *self, CFCParcel *parcel, CFCClass **ordered) {
         "                  const char *file, int line, const char *func) {\n"
         "    PyObject *py_result\n"
         "        = S_call_pymeth(self, meth_name, args, file, line, func);\n"
-        "    cfish_Obj *result = CFBind_py_to_cfish(py_result);\n"
+        "    cfish_Obj *result = CFBind_py_to_cfish(py_result, ret_class);\n"
         "    Py_DECREF(py_result);\n"
         "    if (!nullable && result == NULL) {\n"
         "        CFISH_THROW(CFISH_ERR, \"%s cannot return NULL\", meth_name);\n"
@@ -447,22 +446,11 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
     CFCParcel **parcels = CFCParcel_all_parcels();
     char *callbacks          = S_gen_callbacks(self, parcel, ordered);
     char *type_linkups       = S_gen_type_linkups(self, parcel, ordered);
-    char *privacy_defs       = CFCUtil_strdup("");
     char *pound_includes     = CFCUtil_strdup("");
     char *class_bindings     = S_gen_class_bindings(self, parcel, pymod_name, ordered);
     char *parcel_boots       = CFCUtil_strdup("");
     char *pytype_ready_calls = CFCUtil_strdup("");
     char *module_adds        = CFCUtil_strdup("");
-
-    // Bake in parcel privacy defines, enabling compilation without any extra
-    // compiler flags.
-    for (size_t i = 0; parcels[i]; ++i) {
-        if (!CFCParcel_included(parcels[i])) {
-            const char *privacy_sym = CFCParcel_get_privacy_sym(parcels[i]);
-            privacy_defs = CFCUtil_cat(privacy_defs, "#define ", privacy_sym,
-                                       "\n", NULL);
-        }
-    }
 
     // Add parcel bootstrapping calls.
     for (size_t i = 0; parcels[i]; ++i) {
@@ -482,9 +470,9 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
         pound_includes = CFCUtil_cat(pound_includes, "#include \"",
                                      include_h, "\"\n", NULL);
 
-        // The PyType_Ready invocations for concrete classes are handled via
-        // bootstrapping of Clownfish Class objects.  Since inert classes do
-        // not at present have Class objects, we need to handle their
+        // The PyType_Ready invocations for instantiable classes are handled
+        // via bootstrapping of Clownfish Class objects.  Since inert classes
+        // do not at present have Class objects, we need to handle their
         // PyType_Ready calls independently.
         if (CFCClass_inert(klass)) {
             pytype_ready_calls = CFCUtil_cat(pytype_ready_calls,
@@ -493,14 +481,13 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
         }
 
         module_adds = CFCUtil_cat(module_adds, "    PyModule_AddObject(module, \"",
-                                 struct_sym, "\", (PyObject*)&", struct_sym,
-                                 "_pytype_struct);\n", NULL);
+                                  struct_sym, "\", (PyObject*)&", struct_sym,
+                                  "_pytype_struct);\n", NULL);
     }
 
     const char pattern[] =
         "%s\n"
         "\n"
-        "%s\n"
         "#include \"Python.h\"\n"
         "#include \"cfish_parcel.h\"\n"
         "#include \"CFBind.h\"\n"
@@ -523,6 +510,7 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
         "PyMODINIT_FUNC\n"
         "PyInit__%s(void) {\n"
         "    cfish_Class_bootstrap_hook1 = CFBind_class_bootstrap_hook1;\n"
+        "\n"
         "%s\n" // PyType_Ready calls
         "\n"
         "    S_link_py_types();\n"
@@ -539,8 +527,8 @@ S_write_module_file(CFCPython *self, CFCParcel *parcel, const char *dest) {
         "\n";
 
     char *content
-        = CFCUtil_sprintf(pattern, self->header, privacy_defs, pound_includes,
-                          callbacks, helper_mod_name, class_bindings, type_linkups,
+        = CFCUtil_sprintf(pattern, self->header, pound_includes, callbacks,
+                          helper_mod_name, class_bindings, type_linkups,
                           last_component, pytype_ready_calls, parcel_boots,
                           module_adds, self->footer);
 
@@ -568,12 +556,6 @@ CFCPython_write_bindings(CFCPython *self, const char *parcel_name, const char *d
     if (parcel == NULL) {
         CFCUtil_die("Unknown parcel: %s", parcel_name);
     }
-    // Generate header files declaring callbacks.
-    CFCBindCore *core_binding
-        = CFCBindCore_new(self->hierarchy, self->header, self->footer);
-    //CFCBindCore_write_callbacks_h(core_binding);
-    //CFCBindCore_write_all_modified(core_binding, 1);
-    CFCBase_decref((CFCBase*)core_binding);
     S_write_hostdefs(self);
     S_write_module_file(self, parcel, dest);
 }

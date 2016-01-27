@@ -32,27 +32,24 @@ struct CFCClass;
 CFCPyClass*
 CFCPyClass_new(struct CFCClass *client);
 
-void
-CFCPyClass_destroy(CFCPyClass *self);
-
 /** Add a new class binding to the registry.  Each unique parcel/class-name
- * combination may only be registered once.
- */
+  * combination may only be registered once.
+  */
 void
 CFCPyClass_add_to_registry(CFCPyClass *self);
 
 /** Given a class name, return a class binding if one exists.
- */
+  */
 CFCPyClass*
 CFCPyClass_singleton(const char *class_name);
 
 /** All registered class bindings.
- */
+  */
 CFCPyClass**
 CFCPyClass_registry();
 
 /** Release all memory and references held by the registry.
- */
+  */
 void
 CFCPyClass_clear_registry(void);
 

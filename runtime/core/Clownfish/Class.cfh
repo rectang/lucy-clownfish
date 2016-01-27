@@ -159,4 +159,3 @@ extern cfish_Class_bootstrap_hook1_t cfish_Class_bootstrap_hook1;
 
 __END_C__
 
-

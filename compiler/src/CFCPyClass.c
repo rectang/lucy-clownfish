@@ -24,12 +24,12 @@
 
 #include "CFCBase.h"
 #include "CFCPyClass.h"
+#include "CFCPyMethod.h"
 #include "CFCParcel.h"
 #include "CFCUtil.h"
 #include "CFCClass.h"
 #include "CFCFunction.h"
 #include "CFCMethod.h"
-#include "CFCPyMethod.h"
 
 struct CFCPyClass {
     CFCBase base;
@@ -40,17 +40,20 @@ struct CFCPyClass {
     char *meth_defs;
 };
 
-static char*
-S_pytype_struct_def(CFCPyClass *self);
-
 static CFCPyClass **registry = NULL;
 static size_t registry_size = 0;
 static size_t registry_cap  = 0;
 
+static void
+S_CFCPyClass_destroy(CFCPyClass *self);
+
+static char*
+S_pytype_struct_def(CFCPyClass *self);
+
 static const CFCMeta CFCPERLCLASS_META = {
     "Clownfish::CFC::Binding::Python::Class",
     sizeof(CFCPyClass),
-    (CFCBase_destroy_t)CFCPyClass_destroy
+    (CFCBase_destroy_t)S_CFCPyClass_destroy
 };
 
 CFCPyClass*
@@ -66,8 +69,8 @@ CFCPyClass_new(CFCClass *client) {
     return self;
 }
 
-void
-CFCPyClass_destroy(CFCPyClass *self) {
+static void
+S_CFCPyClass_destroy(CFCPyClass *self) {
     CFCBase_decref((CFCBase*)self->parcel);
     CFCBase_decref((CFCBase*)self->client);
     FREEMEM(self->class_name);
@@ -146,7 +149,7 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
 
     // Constructor.
     CFCFunction *init_func = CFCClass_function(klass, "init");
-    if (init_func && CFCPyMethod_func_can_be_bound(init_func)) {
+    if (init_func && CFCFunction_can_be_bound(init_func)) {
         char *wrapper = CFCPyMethod_constructor_wrapper(init_func, klass);
         bindings = CFCUtil_cat(bindings, wrapper, "\n", NULL);
         FREEMEM(wrapper);
@@ -156,7 +159,7 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
     CFCFunction **funcs = CFCClass_functions(klass);
     for (size_t j = 0; funcs[j] != NULL; j++) {
         CFCFunction *func = funcs[j];
-        if (!CFCPyMethod_func_can_be_bound(func)) {
+        if (!CFCFunction_can_be_bound(func)) {
             continue;
         }
 
@@ -175,11 +178,9 @@ CFCPyClass_gen_binding_code(CFCPyClass *self) {
     CFCMethod **methods = CFCClass_fresh_methods(klass);
     for (size_t j = 0; methods[j] != NULL; j++) {
         CFCMethod *meth = methods[j];
-        CFCMethod_excluded_from_host(meth);
-        CFCPyMethod_can_be_bound(meth);
 
         if (CFCMethod_excluded_from_host(meth)
-            || !CFCPyMethod_can_be_bound(meth)
+            || !CFCMethod_can_be_bound(meth)
            ) {
             continue;
         }
@@ -264,7 +265,7 @@ S_pytype_struct_def(CFCPyClass *self) {
 
     char *tp_new;
     CFCFunction *init_func = CFCClass_function(klass, "init");
-    if (init_func && CFCPyMethod_func_can_be_bound(init_func)) {
+    if (init_func && CFCFunction_can_be_bound(init_func)) {
         tp_new = CFCUtil_sprintf("S_%s_PY_NEW",
                                  CFCClass_full_struct_sym(klass));
     }

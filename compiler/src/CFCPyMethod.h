@@ -38,16 +38,6 @@ CFCPyMethod_get_name(CFCPyMethod *self);
 const char*
 CFCPyMethod_get_py_method_def(CFCPyMethod *self);
 
-/* Check for:
- * - private methods
- * - methods with types which cannot be mapped automatically
- */
-int
-CFCPyMethod_can_be_bound(struct CFCMethod *method);
-
-int
-CFCPyMethod_func_can_be_bound(struct CFCFunction *func);
-
 /** Return C code which knows how to call back into Python for this method.  This
  * code is run when a Python subclass has overridden a method in a Clownfish base
  * class.
@@ -55,19 +45,29 @@ CFCPyMethod_func_can_be_bound(struct CFCFunction *func);
 char*
 CFCPyMethod_callback_def(struct CFCMethod *method, struct CFCClass *invoker);
 
+/** Generate glue code for an instance method.
+  */
 char*
 CFCPyMethod_wrapper(struct CFCMethod *method, struct CFCClass *invoker);
 
-char*
-CFCPyMethod_pymethoddef(struct CFCMethod *method, struct CFCClass *invoker);
-
+/** Generate glue code for a constructor.
+  */
 char*
 CFCPyMethod_constructor_wrapper(struct CFCFunction *init_func,
                                 struct CFCClass *invoker);
 
+/** Generate glue code for an inert function.
+  */
 char*
 CFCPyFunc_inert_wrapper(struct CFCFunction *func, struct CFCClass *invoker);
 
+/** Generate a PyMethodDef entry for an instance method.
+  */
+char*
+CFCPyMethod_pymethoddef(struct CFCMethod *method, struct CFCClass *invoker);
+
+/** Generate a PyMethodDef entry for a static method.
+  */
 char*
 CFCPyFunc_static_pymethoddef(struct CFCFunction *func, struct CFCClass *invoker);
 

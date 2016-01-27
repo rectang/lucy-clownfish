@@ -28,8 +28,6 @@ extern "C" {
 struct cfish_Class;
 struct cfish_String;
 
-#include "Clownfish/Class.h"
-
 /** Wrap the current state of Python's sys.exc_info in a Clownfish Err and
   * throw it.
   *
@@ -168,42 +166,47 @@ CFBind_cfish_to_py_zeroref(struct cfish_Obj *obj) {
   * incremented Clownfish Obj.
   *
   *     string -> String
+  *     bytes  -> Blob
+  *     None   -> NULL
+  *     bool   -> Boolean
+  *     int    -> Integer
+  *     float  -> Float
   *     list   -> Vector
   *     dict   -> Hash
-  *     None   -> NULL
-  *     bytes  -> ByteBuf
-  *     bool   -> BoolNum
-  *     int    -> IntNum
-  *     float  -> FloatNum
   *
   * Python dict keys will be stringified.  Other Clownfish objects will be
-  * left intact.  Anything else will be stringified.   
+  * left intact.  Anything else will be stringified.
   */
 cfish_Obj*
-CFBind_py_to_cfish(PyObject *py_obj);
+CFBind_py_to_cfish(PyObject *py_obj, cfish_Class *klass);
 
-/** FIXME temp hack.
+/** As CFBind_py_to_cfish above, but returns NULL if the PyObject is None
+  * or NULL.
   */
 cfish_Obj*
-CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass);
+CFBind_py_to_cfish_nullable(PyObject *py_obj, cfish_Class *klass);
+
+/** As CFBind_py_to_cfish above, but returns an object that can be used for a
+  * while with no need to decref.
+  *
+  * If `klass` is STRING or OBJ, `allocation` must point to stack-allocated
+  * memory that can hold a String. Otherwise, `allocation` should be NULL.
+  */
+cfish_Obj*
+CFBind_py_to_cfish_noinc(PyObject *py_obj, cfish_Class *klass,
+                         void *allocation);
 
 /** Associate Clownfish classes with Python type objects.  (Internal-only,
   * used during bootstrapping.)
   */
 void
-CFBind_assoc_py_types(cfish_Class ***klass_handles, PyTypeObject **py_types,
-                      int32_t num_items);
+CFBind_assoc_py_types(struct cfish_Class ***klass_handles,
+                      PyTypeObject **py_types, int32_t num_items);
 
 typedef struct CFBindArg {
     cfish_Class *klass;
     void        *ptr;
 } CFBindArg;
-
-typedef struct CFBindStringArg {
-    void *ptr;
-    void *stack_mem;
-    PyObject *stringified;
-} CFBindStringArg;
 
 /* ParseTuple conversion routines for reference types.
  *
@@ -213,19 +216,19 @@ typedef struct CFBindStringArg {
 int
 CFBind_convert_obj(PyObject *input, CFBindArg *arg);
 int
-CFBind_convert_string(PyObject *input, CFBindStringArg *arg);
+CFBind_convert_string(PyObject *input, cfish_String **ptr);
 int
 CFBind_convert_hash(PyObject *input, cfish_Hash **ptr);
 int
-CFBind_convert_array(PyObject *input, cfish_Vector **ptr);
+CFBind_convert_vec(PyObject *input, cfish_Vector **ptr);
 int
 CFBind_maybe_convert_obj(PyObject *input, CFBindArg *arg);
 int
-CFBind_maybe_convert_string(PyObject *input, CFBindStringArg *arg);
+CFBind_maybe_convert_string(PyObject *input, cfish_String **ptr);
 int
 CFBind_maybe_convert_hash(PyObject *input, cfish_Hash **ptr);
 int
-CFBind_maybe_convert_array(PyObject *input, cfish_Vector **ptr);
+CFBind_maybe_convert_vec(PyObject *input, cfish_Vector **ptr);
 
 /* ParseTuple conversion routines for primitive numeric types.
  *
@@ -301,7 +304,7 @@ int
 CFBind_maybe_convert_double(PyObject *input, double *ptr);
 
 void
-CFBind_class_bootstrap_hook1(cfish_Class *self);
+CFBind_class_bootstrap_hook1(struct cfish_Class *self);
 
 #ifdef __cplusplus
 }

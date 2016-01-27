@@ -36,7 +36,9 @@
 #include "Clownfish/Num.h"
 #include "Clownfish/String.h"
 #include "Clownfish/TestHarness/TestUtils.h"
+#include "Clownfish/Util/Atomic.h"
 #include "Clownfish/Util/Memory.h"
+#include "Clownfish/Util/StringHelper.h"
 #include "Clownfish/Vector.h"
 
 static bool Err_initialized;
@@ -154,7 +156,7 @@ S_py_list_to_vector(PyObject *list) {
     Py_ssize_t size = PyList_GET_SIZE(list);
     cfish_Vector *vec = cfish_Vec_new(size);
     for (Py_ssize_t i = 0; i < size; i++) {
-        CFISH_Vec_Store(vec, i, CFBind_py_to_cfish(PyList_GET_ITEM(list, i)));
+        CFISH_Vec_Store(vec, i, CFBind_py_to_cfish(PyList_GET_ITEM(list, i), NULL));
     }
     return vec;
 }
@@ -177,7 +179,7 @@ S_py_dict_to_hash(PyObject *dict) {
                 = CFISH_MAKE_MESS("Failed to stringify as UTF-8");
             CFBind_reraise_pyerr(CFISH_ERR, mess);
         }
-        CFISH_Hash_Store_Utf8(hash, ptr, size, CFBind_py_to_cfish(value));
+        CFISH_Hash_Store_Utf8(hash, ptr, size, CFBind_py_to_cfish(value, NULL));
         if (stringified != key) {
             Py_DECREF(stringified);
         }
@@ -185,68 +187,163 @@ S_py_dict_to_hash(PyObject *dict) {
     return hash;
 }
 
-cfish_Obj*
-CFBind_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass) {
-    cfish_Obj *obj = CFBind_py_to_cfish(py_obj);
-    if (obj && !cfish_Obj_is_a(obj, klass)) {
-        CFISH_DECREF(obj);
-        obj = NULL;
+static cfish_Obj*
+S_maybe_increment(void *vobj, bool increment) {
+    if (increment) {
+        return CFISH_INCREF((cfish_Obj*)vobj);
     }
-    return obj;
+    return (cfish_Obj*)vobj;
 }
 
-cfish_Obj*
-CFBind_py_to_cfish(PyObject *py_obj) {
+static bool
+S_maybe_py_to_cfish(PyObject *py_obj, cfish_Class *klass, bool increment,
+                    bool nullable, void *allocation, cfish_Obj **obj_ptr) {
+    CFISH_UNUSED_VAR(allocation); // FIXME implement stack strings
+
     if (!py_obj || py_obj == Py_None) {
-        return NULL;
+        *obj_ptr = NULL;
+        return nullable;
+    }
+
+	// Default to accepting any type.
+	if (klass == NULL) {
+		klass = CFISH_OBJ;
+	}
+
+    if (S_py_obj_is_a(py_obj, klass)) {
+        *obj_ptr = S_maybe_increment(py_obj, increment);
+        return true;
     }
     else if (py_obj == Py_True) {
-        return (cfish_Obj*)CFISH_TRUE;
+        if (klass != CFISH_BOOLEAN && klass != CFISH_OBJ) {
+            return false;
+        }
+        *obj_ptr = S_maybe_increment(CFISH_TRUE, increment);
+        return true;
     }
     else if (py_obj == Py_False) {
-        return (cfish_Obj*)CFISH_FALSE;
+        if (klass != CFISH_BOOLEAN && klass != CFISH_OBJ) {
+            return false;
+        }
+        *obj_ptr = S_maybe_increment(CFISH_FALSE, increment);
+        return true;
     }
-    else if (PyUnicode_CheckExact(py_obj)) {
+    else if (klass == CFISH_BOOLEAN) {
+        int truthiness = PyObject_IsTrue(py_obj);
+        if (truthiness == 1) {
+            *obj_ptr = S_maybe_increment(CFISH_TRUE, increment);
+        }
+        else if (truthiness == 0) {
+            *obj_ptr = S_maybe_increment(CFISH_FALSE, increment);
+        }
+        else {
+            return false;
+        }
+        return true;
+    }
+
+    // From here on out, we're going to return a new Clownfish object.  The
+    // caller has to take ownership of a refcount; if they don't want to, then
+    // fail rather than attempt to return an object with a refcount of 0.
+    if (!increment) {
+        return false;
+    }
+
+    if (PyUnicode_CheckExact(py_obj)) {
+        if (klass != CFISH_STRING && klass != CFISH_OBJ) {
+            return false;
+        }
         // TODO: Allow Clownfish String to wrap buffer of Python str?
         Py_ssize_t size;
         char *ptr = PyUnicode_AsUTF8AndSize(py_obj, &size);
         // TODO: Can we guarantee that Python will always supply valid UTF-8?
         if (!ptr || !cfish_StrHelp_utf8_valid(ptr, size)) {
-            CFISH_THROW(CFISH_ERR, "Failed to convert Python string to UTF8");
+            return false;
         }
-        return (cfish_Obj*) cfish_Str_new_from_trusted_utf8(ptr, size);
+        *obj_ptr = (cfish_Obj*)cfish_Str_new_from_trusted_utf8(ptr, size);
+        return true;
     }
     else if (PyBytes_CheckExact(py_obj)) {
+        if (klass != CFISH_BLOB && klass != CFISH_OBJ) {
+            return false;
+        }
         char *ptr = PyBytes_AS_STRING(py_obj);
         Py_ssize_t size = PyBytes_GET_SIZE(py_obj);
-        return (cfish_Obj*)cfish_BB_new_bytes(ptr, size);
+        *obj_ptr = (cfish_Obj*)cfish_BB_new_bytes(ptr, size);
+        return true;
     }
     else if (PyList_CheckExact(py_obj)) {
-        return (cfish_Obj*)S_py_list_to_vector(py_obj);
+        if (klass != CFISH_VECTOR && klass != CFISH_OBJ) {
+            return false;
+        }
+        *obj_ptr = (cfish_Obj*)S_py_list_to_vector(py_obj);
+        return true;
     }
     else if (PyDict_CheckExact(py_obj)) {
-        return (cfish_Obj*)S_py_dict_to_hash(py_obj);
+        if (klass != CFISH_HASH && klass != CFISH_OBJ) {
+            return false;
+        }
+        *obj_ptr = (cfish_Obj*)S_py_dict_to_hash(py_obj);
+        return true;
     }
     else if (PyLong_CheckExact(py_obj)) {
+        if (klass != CFISH_INTEGER && klass != CFISH_OBJ) {
+            return false;
+        }
         // Raises ValueError on overflow.
-        return (cfish_Obj*)cfish_Int_new(PyLong_AsLongLong(py_obj));
+        int64_t value = PyLong_AsLongLong(py_obj);
+        if (PyErr_Occurred()) {
+            return false;
+        }
+        *obj_ptr = (cfish_Obj*)cfish_Int_new(value);
+        return true;
     }
     else if (PyFloat_CheckExact(py_obj)) {
-        return (cfish_Obj*)cfish_Float_new(PyFloat_AS_DOUBLE(py_obj));
-    }
-    else {
-        // TODO: Wrap in some sort of cfish_Host object instead of
-        // stringifying?
-        PyObject *stringified = PyObject_Str(py_obj);
-        if (stringified == NULL) {
-            cfish_String *mess
-                = CFISH_MAKE_MESS("Couldn't stringify object");
-            CFBind_reraise_pyerr(CFISH_ERR, mess);
+        if (klass != CFISH_FLOAT && klass != CFISH_OBJ) {
+            return false;
         }
-        cfish_Obj *retval = CFBind_py_to_cfish(stringified);
-        Py_DECREF(stringified);
-        return retval;
+        double value = PyFloat_AsDouble(py_obj);
+        if (PyErr_Occurred()) {
+            return false;
+        }
+        *obj_ptr = (cfish_Obj*)cfish_Float_new(value);
+        return true;
     }
+
+    // The value did not meet the required spec, so return false to indicate
+    // failure.
+    return false;
+}
+
+cfish_Obj*
+CFBind_py_to_cfish_nullable(PyObject *py_obj, cfish_Class *klass) {
+    cfish_Obj *retval;
+    bool success = S_maybe_py_to_cfish(py_obj, klass, true, true, NULL, &retval);
+    if (!success) {
+        CFISH_THROW(CFISH_ERR, "Can't convert to %o", klass);
+    }
+    return retval;
+}
+
+cfish_Obj*
+CFBind_py_to_cfish(PyObject *py_obj, cfish_Class *klass) {
+    cfish_Obj *retval;
+    bool success = S_maybe_py_to_cfish(py_obj, klass, true, false, NULL, &retval);
+    if (!success) {
+        CFISH_THROW(CFISH_ERR, "Can't convert to %o", klass);
+    }
+    return retval;
+}
+
+cfish_Obj*
+CFBind_py_to_cfish_noinc(PyObject *py_obj, cfish_Class *klass,
+                         void *allocation) {
+    cfish_Obj *retval;
+    bool success = S_maybe_py_to_cfish(py_obj, klass, false, false, allocation, &retval);
+    if (!success) {
+        CFISH_THROW(CFISH_ERR, "Can't convert to %o", klass);
+    }
+    return retval;
 }
 
 static int
@@ -280,17 +377,24 @@ CFBind_maybe_convert_obj(PyObject *py_obj, CFBindArg *arg) {
 }
 
 static int
-S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
+S_convert_string(PyObject *py_obj, cfish_String **ptr, bool nullable) {
     if (py_obj == NULL) { // Py_CLEANUP_SUPPORTED cleanup
-        PyObject *stringified = arg->stringified;
-        arg->stringified = NULL;
-        Py_XDECREF(stringified);
+        if (*ptr != NULL) {
+            if (!CFISH_Str_Is_Copy_On_IncRef(*ptr)) {
+                CFISH_DECREF(*ptr);
+            }
+            *ptr = NULL;
+        }
         return 1;
     }
-    cfish_String **ptr = (cfish_String**)arg->ptr;
 
     if (py_obj == Py_None) {
-        if (nullable) {
+        if (*ptr != NULL) {
+            // Default value passed as stack string.
+            *ptr = CFISH_Str_Clone(*ptr);
+            return Py_CLEANUP_SUPPORTED;
+        }
+        else if (nullable) {
             return 1;
         }
         else {
@@ -299,48 +403,47 @@ S_convert_string(PyObject *py_obj, CFBindStringArg *arg, bool nullable) {
         }
     }
     else if (PyUnicode_CheckExact(py_obj)) {
-        // There may be a default value encased within a StackString.  Reuse
-        // its allocation, vaporizing the default.
         Py_ssize_t size;
         char *utf8 = PyUnicode_AsUTF8AndSize(py_obj, &size);
         if (!utf8) {
             return 0;
         }
-        *ptr = cfish_Str_init_stack_string(arg->stack_mem, utf8, size);
-        return 1;
+        *ptr = cfish_Str_new_from_trusted_utf8(utf8, size);
+        return Py_CLEANUP_SUPPORTED;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_STRING)) {
-        *ptr = (cfish_String*)py_obj;
-        return 1;
+        *ptr = (cfish_String*)CFISH_INCREF(py_obj);
+        return Py_CLEANUP_SUPPORTED;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_OBJ)) {
-        arg->stringified = (PyObject*)CFISH_Obj_To_String((cfish_Obj*)py_obj);
-        *ptr = (cfish_String*)arg->stringified;
+        *ptr = CFISH_Obj_To_String((cfish_Obj*)py_obj);
         return Py_CLEANUP_SUPPORTED;
     }
     else {
-        arg->stringified = PyObject_Str(py_obj);
-        if (!arg->stringified) {
+        PyObject *stringified = PyObject_Str(py_obj);
+        if (stringified == NULL) {
             return 0;
         }
         Py_ssize_t size;
-        char *utf8 = PyUnicode_AsUTF8AndSize(arg->stringified, &size);
+        char *utf8 = PyUnicode_AsUTF8AndSize(stringified, &size);
         if (!utf8) {
+            Py_DECREF(stringified);
             return 0;
         }
-        *ptr = cfish_Str_init_stack_string(arg->stack_mem, utf8, size);
+        *ptr = cfish_Str_new_from_trusted_utf8(utf8, size);
+        Py_DECREF(stringified);
         return Py_CLEANUP_SUPPORTED;
     }
 }
 
 int
-CFBind_convert_string(PyObject *py_obj, CFBindStringArg *arg) {
-    return S_convert_string(py_obj, arg, false);
+CFBind_convert_string(PyObject *py_obj, cfish_String **ptr) {
+    return S_convert_string(py_obj, ptr, false);
 }
 
 int
-CFBind_maybe_convert_string(PyObject *py_obj, CFBindStringArg *arg) {
-    return S_convert_string(py_obj, arg, true);
+CFBind_maybe_convert_string(PyObject *py_obj, cfish_String **ptr) {
+    return S_convert_string(py_obj, ptr, true);
 }
 
 static int
@@ -383,9 +486,9 @@ CFBind_maybe_convert_hash(PyObject *py_obj, cfish_Hash **hash_ptr) {
 }
 
 static int
-S_convert_array(PyObject *py_obj, cfish_Vector **array_ptr, bool nullable) {
+S_convert_vec(PyObject *py_obj, cfish_Vector **vec_ptr, bool nullable) {
     if (py_obj == NULL) { // Py_CLEANUP_SUPPORTED cleanup
-        CFISH_DECREF(*array_ptr);
+        CFISH_DECREF(*vec_ptr);
         return 1;
     }
 
@@ -399,11 +502,11 @@ S_convert_array(PyObject *py_obj, cfish_Vector **array_ptr, bool nullable) {
         }
     }
     else if (PyList_CheckExact(py_obj)) {
-        *array_ptr = S_py_list_to_vector(py_obj);
+        *vec_ptr = S_py_list_to_vector(py_obj);
         return Py_CLEANUP_SUPPORTED;
     }
     else if (S_py_obj_is_a(py_obj, CFISH_VECTOR)) {
-        *array_ptr = (cfish_Vector*)CFISH_INCREF(py_obj);
+        *vec_ptr = (cfish_Vector*)CFISH_INCREF(py_obj);
         return Py_CLEANUP_SUPPORTED;
     }
     else {
@@ -412,13 +515,13 @@ S_convert_array(PyObject *py_obj, cfish_Vector **array_ptr, bool nullable) {
 }
 
 int
-CFBind_convert_array(PyObject *py_obj, cfish_Vector **array_ptr) {
-    return S_convert_array(py_obj, array_ptr, false);
+CFBind_convert_vec(PyObject *py_obj, cfish_Vector **vec_ptr) {
+    return S_convert_vec(py_obj, vec_ptr, false);
 }
 
 int
-CFBind_maybe_convert_array(PyObject *py_obj, cfish_Vector **array_ptr) {
-    return S_convert_array(py_obj, array_ptr, true);
+CFBind_maybe_convert_vec(PyObject *py_obj, cfish_Vector **vec_ptr) {
+    return S_convert_vec(py_obj, vec_ptr, true);
 }
 
 static int
@@ -812,11 +915,21 @@ cfish_dec_refcount(void *vself) {
 
 void*
 CFISH_Obj_To_Host_IMP(cfish_Obj *self) {
-    return self;
+    return CFISH_INCREF(self);
 }
 
 /**** Class ****************************************************************/
 
+/* Tell Python about the size of Clownfish objects, by copying
+ * `cfclass->obj_alloc_size` into `pytype->tp_basicsize`.
+ * **THIS MUST BE RUN BEFORE Class_Make_Obj IS CALLED** because under the
+ * Python bindings, Clownfish uses Python object allocation internally.
+ * Furthermore, `tp_basicsize` is supposed to be set before `PyType_Ready()`
+ * is called.
+ *
+ * Ideally we would set `tp_basicsize` from within `Class_register_with_host`,
+ * but it doesn't get called until too late.
+ */
 void
 CFBind_class_bootstrap_hook1(cfish_Class *self) {
     PyTypeObject *py_type = S_get_cached_py_type(self);
@@ -840,6 +953,10 @@ CFBind_class_bootstrap_hook1(cfish_Class *self) {
     }
 }
 
+/* Check the Class object for its associated PyTypeObject, which is stored in
+ * `klass->host_type`.  If it is not there yet, search the class mapping and
+ * cache it in the object.  Return the PyTypeObject.
+ */
 static PyTypeObject*
 S_get_cached_py_type(cfish_Class *self) {
     PyTypeObject *py_type = (PyTypeObject*)self->host_type;
@@ -902,28 +1019,33 @@ CFISH_Class_Init_Obj_IMP(cfish_Class *self, void *allocation) {
 
 void
 cfish_Class_register_with_host(cfish_Class *singleton, cfish_Class *parent) {
+    // FIXME
     CFISH_UNUSED_VAR(singleton);
     CFISH_UNUSED_VAR(parent);
 }
 
 cfish_Vector*
 cfish_Class_fresh_host_methods(cfish_String *class_name) {
+    // FIXME Scan Python class for host methods which override.  Until this is
+    // implemented, it will be impossible to override Clownfish methods from
+    // Python.
     CFISH_UNUSED_VAR(class_name);
     return cfish_Vec_new(0);
 }
 
 cfish_String*
 cfish_Class_find_parent_class(cfish_String *class_name) {
+    // FIXME Until this is implemented, subclassing from Python will be
+    // impossible.
     CFISH_UNUSED_VAR(class_name);
-    CFISH_THROW(CFISH_ERR, "TODO");
-    CFISH_UNREACHABLE_RETURN(cfish_String*);
+    return NULL;
 }
 
 /**** Method ***************************************************************/
 
 cfish_String*
 CFISH_Method_Host_Name_IMP(cfish_Method *self) {
-    return (cfish_String*)CFISH_INCREF(self->name);
+    return cfish_Method_lower_snake_alias(self);
 }
 
 /**** Err ******************************************************************/

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -23,6 +22,7 @@
 
 #include "CFCBase.h"
 #include "CFCPyMethod.h"
+#include "CFCPyTypeMap.h"
 #include "CFCUtil.h"
 #include "CFCClass.h"
 #include "CFCFunction.h"
@@ -31,7 +31,6 @@
 #include "CFCType.h"
 #include "CFCParcel.h"
 #include "CFCParamList.h"
-#include "CFCPyTypeMap.h"
 #include "CFCVariable.h"
 
 #ifndef true
@@ -52,37 +51,6 @@ S_build_unused_vars(CFCVariable **vars);
  * compiler warnings. */
 static char*
 S_maybe_unreachable(CFCType *return_type);
-
-static int
-S_types_can_be_bound(CFCParamList *param_list, CFCType *return_type) {
-    // Test whether parameters can be mapped automatically.
-    CFCVariable  **arg_vars   = CFCParamList_get_variables(param_list);
-    for (size_t i = 0; arg_vars[i] != NULL; i++) {
-        CFCType *type = CFCVariable_get_type(arg_vars[i]);
-        if (!CFCType_is_object(type) && !CFCType_is_primitive(type)) {
-            return false;
-        }
-
-        // TODO: kill this off after changing ClassSpec so that it doesn't
-        // look like a legit object type (it's just a struct).
-        if (strcmp("cfish_ClassSpec", CFCType_get_specifier(type)) == 0) {
-            return false;
-        }
-        if (strcmp("cfish_Thread", CFCType_get_specifier(type)) == 0) {
-            return false;
-        }
-    }
-
-    // Test whether return type can be mapped automatically.
-    if (!CFCType_is_void(return_type)
-        && !CFCType_is_object(return_type)
-        && !CFCType_is_primitive(return_type)
-       ) {
-        return false;
-    }
-
-    return true;
-}
 
 struct CFCPyMethod {
     CFCBase base;
@@ -122,21 +90,6 @@ CFCPyMethod_get_name(CFCPyMethod *self) {
 const char*
 CFCPyMethod_get_py_method_def(CFCPyMethod *self) {
     return self->py_method_def;
-}
-
-int
-CFCPyMethod_can_be_bound(CFCMethod *method) {
-    if (CFCSymbol_private((CFCSymbol*)method)) {
-        return false;
-    }
-    return S_types_can_be_bound(CFCMethod_get_param_list(method),
-                                CFCMethod_get_return_type(method));
-}
-
-int
-CFCPyMethod_func_can_be_bound(CFCFunction *func) {
-    return S_types_can_be_bound(CFCFunction_get_param_list(func),
-                                CFCFunction_get_return_type(func));
 }
 
 static char*
@@ -229,6 +182,9 @@ static struct {
     {NULL, NULL}
 };
 
+/* Given a type, choose the corresponding name of the member with that type in
+ * the cfbind_any_t union.
+ */
 static const char*
 S_choose_any_t(CFCType *type) {
     if (CFCType_is_object(type)) {
@@ -247,6 +203,11 @@ S_choose_any_t(CFCType *type) {
     return NULL; // Unreachable
 }
 
+/* Some of the ParseTuple conversion routines provided by the Python-flavored
+ * CFBind module accept a CFBindArg instead of just a pointer to the value
+ * itself.  This routine generates the declarations for those CFBindArg
+ * variables, as well as handling some default values.
+ */
 static char*
 S_gen_declaration(CFCVariable *var, const char *val, int tick) {
     CFCType *type = CFCVariable_get_type(var);
@@ -262,17 +223,9 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
                     "    const char arg_%s_DEFAULT[] = %s;\n"
                     "    cfargs[%d].ptr = CFISH_SSTR_WRAP_UTF8(\n"
                     "        arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
-                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, cfargs[%d].ptr, NULL};\n"
                     ;
                 result = CFCUtil_sprintf(pattern, var_name, val, tick,
-                                         var_name, var_name, var_name,
-                                         tick, tick);
-            }
-            else {
-                const char pattern[] =
-                    "    CFBindStringArg wrap_arg_%s = {&cfargs[%d].ptr, CFISH_ALLOCA_OBJ(CFISH_STRING), NULL};\n"
-                    ;
-                result = CFCUtil_sprintf(pattern, var_name, tick);
+                                         var_name, var_name);
             }
         }
         else {
@@ -281,7 +234,7 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
                             val, type_str);
             }
             if (strcmp(specifier, "cfish_Hash") != 0
-                && strcmp(specifier, "cfish_VArray") != 0
+                && strcmp(specifier, "cfish_Vector") != 0
                 ) {
                 const char *class_var = CFCType_get_class_var(type);
                 char pattern[] =
@@ -292,7 +245,11 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
         }
     }
     else if (CFCType_is_primitive(type)) {
-        ;
+        if (val) {
+            char pattern[] = "    cfargs[%d].%s = %s;\n";
+            const char *member = S_choose_any_t(type);
+            result = CFCUtil_sprintf(pattern, tick, member, val);
+        }
     }
     else {
         CFCUtil_die("Unexpected type, can't gen declaration: %s", type_str);
@@ -301,6 +258,12 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
     return result;
 }
 
+/* The Python C API routine `PyArg_ParseTupleAndKeywords` is a variadic
+ * function which takes arguments in pairs: a conversion routine and a pointer
+ * to a value.  This function generates the appropriate pair for a given
+ * variable: a conversion routine and the pointer to the variable, separated
+ * by a comma.
+ */
 static char*
 S_gen_target(CFCVariable *var, const char *value, int tick) {
     CFCType *type = CFCVariable_get_type(var);
@@ -317,16 +280,21 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
         var_name = CFCUtil_sprintf("cfargs[%d].%s_", tick, dest_name);
     }
     else if (CFCType_is_object(type)) {
+        if (CFCType_nullable(type) ||
+            (value && strcmp(value, "NULL") == 0)
+           ) {
+            maybe_maybe = "maybe_";
+        }
         if (strcmp(specifier, "cfish_String") == 0) {
             dest_name = "string";
-            var_name = CFCUtil_sprintf("wrap_arg_%s", micro_sym);
+            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
         }
         else if (strcmp(specifier, "cfish_Hash") == 0) {
             dest_name = "hash";
             var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
         }
-        else if (strcmp(specifier, "cfish_VArray") == 0) {
-            dest_name = "array";
+        else if (strcmp(specifier, "cfish_Vector") == 0) {
+            dest_name = "vec";
             var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
         }
         else {
@@ -343,6 +311,9 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
     return content;
 }
 
+/* Generate the code which parses arguments passed from Python and converts
+ * them to Clownfish-flavored C values.
+ */
 static char*
 S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
     char *content = NULL;
@@ -367,7 +338,7 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         // Build up ParseTuple format string.
         if (val == NULL) {
             if (optional_started) { // problem!
-                *error = "Optional after required param";
+                *error = "Required after optional param";
                 goto CLEAN_UP_AND_RETURN;
             }
         }
@@ -464,16 +435,16 @@ S_callback_refcount_mods(CFCParamList *param_list) {
         const char  *name = CFCVariable_get_name(var);
         if (!CFCType_is_object(type)) {
             continue;
-        }   
+        }
         else if (CFCType_incremented(type)) {
             refcount_mods = CFCUtil_cat(refcount_mods, "    CFISH_INCREF(",
                                         name, ");\n", NULL);
-        }   
+        }
         else if (CFCType_decremented(type)) {
             refcount_mods = CFCUtil_cat(refcount_mods, "    CFISH_DECREF(",
                                         name, ");\n", NULL);
-        }   
-    }   
+        }
+    }
 
     return refcount_mods;
 }
@@ -488,7 +459,7 @@ CFCPyMethod_callback_def(CFCMethod *method, CFCClass *invoker) {
     char         *override_sym = CFCMethod_full_override_sym(method, invoker);
     char *content;
 
-    if (CFCPyMethod_can_be_bound(method)) {
+    if (CFCMethod_can_be_bound(method)) {
         char *py_args = S_build_py_args(param_list);
         char *invocation = S_build_pymeth_invocation(method);
         char *refcount_mods = S_callback_refcount_mods(param_list);
@@ -496,7 +467,7 @@ CFCPyMethod_callback_def(CFCMethod *method, CFCClass *invoker) {
                                    ? ""
                                    : "    return cfcb_RESULT;\n";
 
-        const char pattern[] = 
+        const char pattern[] =
             "%s\n"
             "%s(%s) {\n"
             "%s\n"
@@ -556,54 +527,6 @@ S_maybe_unreachable(CFCType *return_type) {
         return_statement = CFCUtil_sprintf(pattern, ret_type_str);
     }
     return return_statement;
-}
-
-// Prep any decrefs for running inside `CFBind_run_trapped`.
-char*
-S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
-    CFCVariable **vars = CFCParamList_get_variables(param_list);
-    int num_vars = CFCParamList_num_vars(param_list);
-    int num_decrefs = 0;
-    char *decrefs = CFCUtil_strdup("");
-
-    for (int i = first_tick; i < num_vars; i++) {
-        CFCVariable *var = vars[i];
-        CFCType *type = CFCVariable_get_type(var);
-        const char *micro_sym = CFCVariable_get_name(var);
-        const char *specifier = CFCType_get_specifier(type);
-
-        if (strcmp(specifier, "cfish_String") == 0) {
-            char pattern[] =
-                "%s    decrefs[%d].ptr = wrap_arg_%s.stringified;\n";
-            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs,
-                         micro_sym);
-            FREEMEM(decrefs);
-            decrefs = temp;
-            num_decrefs++;
-        }
-        else if (strcmp(specifier, "cfish_Hash") == 0
-                 || strcmp(specifier, "cfish_VArray") == 0
-                ) {
-            char pattern[] = "%s    decrefs[%d].ptr = cfargs[%d].ptr;\n";
-            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs, i);
-            FREEMEM(decrefs);
-            decrefs = temp;
-            num_decrefs++;
-        }
-    }
-
-    if (num_decrefs) {
-        char pattern[] =
-            "    cfbind_any_t decrefs[%d];\n"
-            "    context.decrefs = decrefs;\n"
-            "%s"
-            ;
-        char *temp = CFCUtil_sprintf(pattern, num_decrefs, decrefs);
-        FREEMEM(decrefs);
-        decrefs = temp;
-    }
-
-    return decrefs;
 }
 
 char*
@@ -689,30 +612,45 @@ S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     return content;
 }
 
+// Prep any decrefs for running inside `CFBind_run_trapped`.  These decrefs
+// will run whether or not an exception is trapped.
 char*
-S_gen_decrefs(CFCParamList *param_list, int first_tick) {
+S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
-    char *content = CFCUtil_strdup("");
-    for (int i = first_tick;i < num_vars; i++) {
-        CFCType *type = CFCVariable_get_type(vars[i]);
-        if (!CFCType_is_object(type)) {
-            continue;
-        }
+    int num_decrefs = 0;
+    char *decrefs = CFCUtil_strdup("");
+
+    for (int i = first_tick; i < num_vars; i++) {
+        CFCVariable *var = vars[i];
+        CFCType *type = CFCVariable_get_type(var);
+        const char *micro_sym = CFCVariable_get_name(var);
         const char *specifier = CFCType_get_specifier(type);
-        const char *var_name = CFCVariable_get_name(vars[i]);
-        if (strcmp(specifier, "cfish_String") == 0) {
-            content = CFCUtil_cat(content, "    CFISH_DECREF(wrap_arg_",
-                                  var_name, ".stringified);\n", NULL);
-        }
-        else if (strcmp(specifier, "cfish_Hash") == 0
-                 || strcmp(specifier, "cfish_VArray") == 0
-           ) {
-            content = CFCUtil_cat(content, "    CFISH_DECREF(arg_",
-                                  var_name, ");\n", NULL);
+
+        if (strcmp(specifier, "cfish_String") == 0
+             || strcmp(specifier, "cfish_Vector") == 0
+             || strcmp(specifier, "cfish_Hash") == 0
+            ) {
+            char pattern[] = "%s    decrefs[%d].ptr = cfargs[%d].ptr;\n";
+            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs, i);
+            FREEMEM(decrefs);
+            decrefs = temp;
+            num_decrefs++;
         }
     }
-    return content;
+
+    if (num_decrefs) {
+        char pattern[] =
+            "    cfbind_any_t decrefs[%d];\n"
+            "    context.decrefs = decrefs;\n"
+            "%s"
+            ;
+        char *temp = CFCUtil_sprintf(pattern, num_decrefs, decrefs);
+        FREEMEM(decrefs);
+        decrefs = temp;
+    }
+
+    return decrefs;
 }
 
 char*
@@ -746,6 +684,9 @@ S_gen_trap_arg_list(CFCParamList *param_list) {
     return arg_list;
 }
 
+/* Generate a wrapper routine for instance methods which conforms to the
+ * requirements of `Err_trap`.
+ */
 char*
 S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list = CFCMethod_get_param_list(method);
@@ -847,23 +788,6 @@ S_gen_inert_func_trap(CFCFunction *func, CFCClass *invoker) {
 }
 
 char*
-S_gen_return_statement(CFCType *return_type) {
-    if (CFCType_is_void(return_type)) {
-        return CFCUtil_strdup("    Py_RETURN_NONE;\n");
-    }
-    else if (CFCType_incremented(return_type)) {
-        return CFCUtil_strdup(
-            "    return CFBind_cfish_to_py_zeroref((cfish_Obj*)retval);\n");
-    }
-    else {
-        char *conversion = CFCPyTypeMap_c_to_py(return_type, "retval");
-        char *content = CFCUtil_sprintf("    return %s;\n", conversion);
-        FREEMEM(conversion);
-        return content;
-    }
-}
-
-char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
     CFCType      *return_type = CFCMethod_get_return_type(method);
@@ -875,7 +799,7 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     const char *run_trapped = S_choose_run_trapped(return_type);
 
     char pattern[] =
-        "%s\n"
+        "%s\n" // meth trap routine
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
@@ -885,13 +809,13 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, meth_trap, meth_sym, meth_top,
-                                    increfs, decrefs, run_trapped,
-                                    meth_sym);
+                                    increfs, decrefs, run_trapped, meth_sym);
     FREEMEM(decrefs);
     FREEMEM(increfs);
     FREEMEM(meth_sym);
     FREEMEM(meth_top);
     FREEMEM(meth_trap);
+
     return wrapper;
 }
 
@@ -976,12 +900,18 @@ CFCPyMethod_pymethoddef(CFCMethod *method, CFCClass *invoker) {
     const char *flags = CFCParamList_num_vars(param_list) == 1
                         ? "METH_NOARGS"
                         : "METH_KEYWORDS|METH_VARARGS";
-    const char *micro_sym = CFCSymbol_get_name((CFCSymbol*)method);
     char *meth_sym = CFCMethod_full_method_sym(method, invoker);
+    char *micro_sym = CFCUtil_strdup(CFCSymbol_get_name((CFCSymbol*)method));
+    for (int i = 0; micro_sym[i] != 0; i++) {
+        micro_sym[i] = tolower(micro_sym[i]);
+    }
+
     char pattern[] =
         "{\"%s\", (PyCFunction)S_%s, %s, NULL},";
     char *py_meth_def = CFCUtil_sprintf(pattern, micro_sym, meth_sym, flags);
+
     FREEMEM(meth_sym);
+    FREEMEM(micro_sym);
     return py_meth_def;
 }
 
