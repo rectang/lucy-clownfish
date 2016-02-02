@@ -71,7 +71,7 @@ S_build_py_args(CFCParamList *param_list) {
  * them to Clownfish-flavored C values.
  */
 static char*
-S_gen_arg_parsing(CFCParamList *param_list) {
+S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
     char *content = NULL;
 
     CFCVariable **vars = CFCParamList_get_variables(param_list);
@@ -83,6 +83,21 @@ S_gen_arg_parsing(CFCParamList *param_list) {
     char *format_str   = CFCUtil_strdup("");
     char *targets      = CFCUtil_strdup("");
     int optional_started = 0;
+
+    for (int i = first_tick; i < num_vars; i++) {
+        const char  *val  = vals[i];
+        if (val == NULL) {
+            if (optional_started) { // problem!
+                *error = "Required after optional param";
+                goto CLEAN_UP_AND_RETURN;
+            }
+        }
+        else {
+            if (!optional_started) {
+                optional_started = 1;
+            }
+        }
+    }
 
     char parse_pattern[] =
         "    CFBindTrapContext context = {{0}};\n"
@@ -98,6 +113,7 @@ S_gen_arg_parsing(CFCParamList *param_list) {
     content = CFCUtil_sprintf(parse_pattern, num_vars, declarations, keywords,
                               format_str, targets);
 
+CLEAN_UP_AND_RETURN:
     FREEMEM(declarations);
     FREEMEM(keywords);
     FREEMEM(format_str);
@@ -268,7 +284,14 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
         return CFCUtil_sprintf(pattern);
     }
     else {
-        char *arg_parsing = S_gen_arg_parsing(param_list);
+        char *error = NULL;
+        char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
+        if (error) {
+            CFCUtil_die("%s in %s", error, CFCMethod_get_name(method));
+        }
+        if (!arg_parsing) {
+            return NULL;
+        }
         char pattern[] =
             "(PyObject *self, PyObject *args, PyObject *kwargs) {\n"
             "%s"
