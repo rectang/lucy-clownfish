@@ -67,6 +67,57 @@ S_build_py_args(CFCParamList *param_list) {
     return py_args;
 }
 
+/* Some of the ParseTuple conversion routines provided by the Python-flavored
+ * CFBind module accept a CFBindArg instead of just a pointer to the value
+ * itself.  This routine generates the declarations for those CFBindArg
+ * variables, as well as handling some default values.
+ */
+static char*
+S_gen_declaration(CFCVariable *var, const char *val, int tick) {
+    CFCType *type = CFCVariable_get_type(var);
+    const char *var_name = CFCVariable_get_name(var);
+    const char *type_str = CFCType_to_c(type);
+    char *result = NULL;
+
+    if (CFCType_is_object(type)) {
+        const char *specifier = CFCType_get_specifier(type);
+        if (strcmp(specifier, "cfish_String") == 0) {
+            if (val && strcmp(val, "NULL") != 0) {
+                const char pattern[] =
+                    "    const char arg_%s_DEFAULT[] = %s;\n"
+                    "    cfargs[%d].ptr = CFISH_SSTR_WRAP_UTF8(\n"
+                    "        arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
+                    ;
+                result = CFCUtil_sprintf(pattern, var_name, val, tick,
+                                         var_name, var_name);
+            }
+        }
+        else {
+            if (val && strcmp(val, "NULL") != 0) {
+                CFCUtil_die("Can't assign a default of '%s' to a %s",
+                            val, type_str);
+            }
+            if (strcmp(specifier, "cfish_Hash") != 0
+                && strcmp(specifier, "cfish_Vector") != 0
+                ) {
+                const char *class_var = CFCType_get_class_var(type);
+                char pattern[] =
+                    "    CFBindArg wrap_arg_%s = {%s, &cfargs[%d].ptr};\n"
+                    ;
+                result = CFCUtil_sprintf(pattern, var_name, class_var, tick);
+            }
+        }
+    }
+    else if (CFCType_is_primitive(type)) {
+        ;
+    }
+    else {
+        CFCUtil_die("Unexpected type, can't gen declaration: %s", type_str);
+    }
+
+    return result;
+}
+
 /* Generate the code which parses arguments passed from Python and converts
  * them to Clownfish-flavored C values.
  */
@@ -85,7 +136,9 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
     int optional_started = 0;
 
     for (int i = first_tick; i < num_vars; i++) {
+        CFCVariable *var  = vars[i];
         const char  *val  = vals[i];
+
         if (val == NULL) {
             if (optional_started) { // problem!
                 *error = "Required after optional param";
@@ -97,6 +150,10 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
                 optional_started = 1;
             }
         }
+
+        char *declaration = S_gen_declaration(var, val, i);
+        declarations = CFCUtil_cat(declarations, declaration, NULL);
+        FREEMEM(declaration);
     }
 
     char parse_pattern[] =
