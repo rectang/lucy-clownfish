@@ -424,6 +424,7 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     char pattern[] =
         "static PyObject*\n"
         "S_%s%s"
+        "    cfargs[0].ptr = self;\n"
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
