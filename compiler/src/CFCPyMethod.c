@@ -434,23 +434,67 @@ S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     return content;
 }
 
+// Prep any decrefs for running inside `CFBind_run_trapped`.  These decrefs
+// will run whether or not an exception is trapped.
+char*
+S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    int num_vars = CFCParamList_num_vars(param_list);
+    int num_decrefs = 0;
+    char *decrefs = CFCUtil_strdup("");
+
+    for (int i = first_tick; i < num_vars; i++) {
+        CFCVariable *var = vars[i];
+        CFCType *type = CFCVariable_get_type(var);
+        const char *micro_sym = CFCVariable_get_name(var);
+        const char *specifier = CFCType_get_specifier(type);
+
+        if (strcmp(specifier, "cfish_String") == 0
+             || strcmp(specifier, "cfish_Vector") == 0
+             || strcmp(specifier, "cfish_Hash") == 0
+            ) {
+            char pattern[] = "%s    decrefs[%d].ptr = cfargs[%d].ptr;\n";
+            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs, i);
+            FREEMEM(decrefs);
+            decrefs = temp;
+            num_decrefs++;
+        }
+    }
+
+    if (num_decrefs) {
+        char pattern[] =
+            "    cfbind_any_t decrefs[%d];\n"
+            "    context.decrefs = decrefs;\n"
+            "%s"
+            ;
+        char *temp = CFCUtil_sprintf(pattern, num_decrefs, decrefs);
+        FREEMEM(decrefs);
+        decrefs = temp;
+    }
+
+    return decrefs;
+}
+
 char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
+    char *decrefs    = S_gen_trap_decrefs(param_list, 1);
 
     char pattern[] =
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
         "    cfargs[0].ptr = self;\n"
+        "%s" // decrefs
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, meth_sym, meth_top,
-                                    increfs);
+                                    increfs, decrefs);
+    FREEMEM(decrefs);
     FREEMEM(increfs);
     FREEMEM(meth_sym);
     FREEMEM(meth_top);
