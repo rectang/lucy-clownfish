@@ -67,6 +67,50 @@ S_build_py_args(CFCParamList *param_list) {
     return py_args;
 }
 
+static struct {
+    const char *key;
+    const char *value;
+} any_t_member_map[] = {
+    {"int8_t", "int8_t_"},
+    {"int16_t", "int16_t_"},
+    {"int32_t", "int32_t_"},
+    {"int64_t", "int64_t_"},
+    {"uint8_t", "uint8_t_"},
+    {"uint16_t", "uint16_t_"},
+    {"uint32_t", "uint32_t_"},
+    {"uint64_t", "uint64_t_"},
+    {"char", "char_"},
+    {"short", "short_"},
+    {"int", "int_"},
+    {"long", "long_"},
+    {"size_t", "size_t_"},
+    {"bool", "bool_"},
+    {"float", "float_"},
+    {"double", "double_"},
+    {NULL, NULL}
+};
+
+/* Given a type, choose the corresponding name of the member with that type in
+ * the cfbind_any_t union.
+ */
+static const char*
+S_choose_any_t(CFCType *type) {
+    if (CFCType_is_object(type)) {
+        return "ptr";
+    }
+    else if (CFCType_is_primitive(type)) {
+        const char *specifier = CFCType_get_specifier(type);
+        for (int i = 0; any_t_member_map[i].key != NULL; i++) {
+            if (strcmp(any_t_member_map[i].key, specifier) == 0) {
+                return any_t_member_map[i].value;
+            }
+        }
+    }
+    CFCUtil_die("Unexpected return type: %s",
+                CFCType_to_c(type));
+    return NULL; // Unreachable
+}
+
 /* Some of the ParseTuple conversion routines provided by the Python-flavored
  * CFBind module accept a CFBindArg instead of just a pointer to the value
  * itself.  This routine generates the declarations for those CFBindArg
