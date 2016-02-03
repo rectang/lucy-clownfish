@@ -639,6 +639,27 @@ S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
 }
 
 char*
+S_gen_constructor_trap(CFCFunction *init_func, CFCClass *invoker) {
+    CFCParamList *param_list = CFCFunction_get_param_list(init_func);
+    char *init_func_str = CFCFunction_full_func_sym(init_func, invoker);
+    char *arg_list = S_gen_trap_arg_list(param_list);
+
+    const char pattern[] =
+        "static void\n"
+        "S_run_%s_AS_NEW(void *vcontext) {\n"
+        "    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;\n"
+        "    context->retval.ptr = %s(%s);\n"
+        "}\n"
+        ;
+    char *content = CFCUtil_sprintf(pattern, init_func_str, init_func_str,
+                                    arg_list);
+
+    FREEMEM(arg_list);
+    FREEMEM(init_func_str);
+    return content;
+}
+
+char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
     CFCType      *return_type = CFCMethod_get_return_type(method);
@@ -672,9 +693,11 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
 
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
+    char *trap_wrap  = S_gen_constructor_trap(init_func, invoker);
     const char *struct_sym = CFCClass_full_struct_sym(invoker);
 
     char pattern[] =
+        "%s\n" // trap_wrap
         "static PyObject*\n"
         "S_%s_PY_NEW(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
         "    CFISH_UNUSED_VAR(type);\n"
@@ -683,8 +706,9 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, struct_sym);
+    char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym);
 
+    FREEMEM(trap_wrap);
     return wrapper;
 }
 
