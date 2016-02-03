@@ -70,6 +70,54 @@ S_build_py_args(CFCParamList *param_list) {
 static struct {
     const char *key;
     const char *value;
+} run_trapped_primitive_map[] = {
+    {"int8_t", "CFBIND_RUN_TRAPPED_int8_t"},
+    {"int16_t", "CFBIND_RUN_TRAPPED_int16_t"},
+    {"int32_t", "CFBIND_RUN_TRAPPED_int32_t"},
+    {"int64_t", "CFBIND_RUN_TRAPPED_int64_t"},
+    {"uint8_t", "CFBIND_RUN_TRAPPED_uint8_t"},
+    {"uint16_t", "CFBIND_RUN_TRAPPED_uint16_t"},
+    {"uint32_t", "CFBIND_RUN_TRAPPED_uint32_t"},
+    {"uint64_t", "CFBIND_RUN_TRAPPED_uint64_t"},
+    {"char", "CFBIND_RUN_TRAPPED_char"},
+    {"short", "CFBIND_RUN_TRAPPED_short"},
+    {"int", "CFBIND_RUN_TRAPPED_int"},
+    {"long", "CFBIND_RUN_TRAPPED_long"},
+    {"size_t", "CFBIND_RUN_TRAPPED_size_t"},
+    {"bool", "CFBIND_RUN_TRAPPED_bool"},
+    {"float", "CFBIND_RUN_TRAPPED_float"},
+    {"double", "CFBIND_RUN_TRAPPED_double"},
+    {NULL, NULL}
+};
+
+static const char*
+S_choose_run_trapped(CFCType *return_type) {
+    if (CFCType_is_void(return_type)) {
+        return "CFBIND_RUN_TRAPPED_void";
+    }
+    else if (CFCType_incremented(return_type)) {
+        return "CFBIND_RUN_TRAPPED_inc_obj";
+    }
+    else if (CFCType_is_object(return_type)) {
+        return "CFBIND_RUN_TRAPPED_obj";
+    }
+    else if (CFCType_is_primitive(return_type)) {
+        const char *specifier = CFCType_get_specifier(return_type);
+        for (int i = 0; run_trapped_primitive_map[i].key != NULL; i++) {
+            if (strcmp(run_trapped_primitive_map[i].key, specifier) == 0) {
+                return run_trapped_primitive_map[i].value;
+            }
+        }
+    }
+
+    CFCUtil_die("Unexpected return type: %s",
+                CFCType_to_c(return_type));
+    return NULL; // Unreachable
+}
+
+static struct {
+    const char *key;
+    const char *value;
 } any_t_member_map[] = {
     {"int8_t", "int8_t_"},
     {"int16_t", "int16_t_"},
@@ -593,11 +641,13 @@ S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
 char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
+    CFCType      *return_type = CFCMethod_get_return_type(method);
     char *meth_trap  = S_gen_meth_trap(method, invoker);
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    const char *run_trapped = S_choose_run_trapped(return_type);
 
     char pattern[] =
         "%s\n" // meth trap routine
@@ -606,11 +656,11 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "%s" // increfs
         "    cfargs[0].ptr = self;\n"
         "%s" // decrefs
-        "    Py_RETURN_NONE;\n"
+        "    return %s(S_run_%s, &context);\n" // return statement
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, meth_trap, meth_sym, meth_top,
-                                    increfs, decrefs);
+                                    increfs, decrefs, run_trapped, meth_sym);
     FREEMEM(decrefs);
     FREEMEM(increfs);
     FREEMEM(meth_sym);
