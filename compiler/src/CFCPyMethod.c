@@ -693,21 +693,32 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
 
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
+    CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
     char *trap_wrap  = S_gen_constructor_trap(init_func, invoker);
     const char *struct_sym = CFCClass_full_struct_sym(invoker);
+    char *error = NULL;
+    char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
+    if (error) {
+        CFCUtil_die("%s in constructor for %s", error,
+                    CFCClass_get_name(invoker));
+    }
+    if (!arg_parsing) {
+        CFCUtil_die("Unexpected arg parsing error for %s",
+                    CFCClass_get_name(invoker));
+    }
 
     char pattern[] =
         "%s\n" // trap_wrap
         "static PyObject*\n"
         "S_%s_PY_NEW(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
-        "    CFISH_UNUSED_VAR(type);\n"
-        "    CFISH_UNUSED_VAR(args);\n"
-        "    CFISH_UNUSED_VAR(kwargs);\n"
+        "%s" // arg_parsing
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym);
+    char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym,
+                                    arg_parsing);
 
+    FREEMEM(arg_parsing);
     FREEMEM(trap_wrap);
     return wrapper;
 }
