@@ -697,6 +697,7 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     char *trap_wrap  = S_gen_constructor_trap(init_func, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    const char *class_var  = CFCClass_full_class_var(invoker);
     const char *struct_sym = CFCClass_full_struct_sym(invoker);
     char *error = NULL;
     char *arg_parsing = S_gen_arg_parsing(param_list, 1, &error);
@@ -715,12 +716,13 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         "S_%s_PY_NEW(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
         "%s" // arg_parsing
         "%s" // increfs
+        "    context.args[0].ptr = CFISH_Class_Make_Obj(%s);\n"
         "%s" // decrefs
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, trap_wrap, struct_sym,
-                                    arg_parsing, increfs,
+                                    arg_parsing, increfs, class_var,
                                     decrefs);
     FREEMEM(decrefs);
     FREEMEM(increfs);
