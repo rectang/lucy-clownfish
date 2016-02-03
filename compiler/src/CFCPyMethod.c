@@ -520,14 +520,87 @@ S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
 }
 
 char*
+S_gen_trap_arg_list(CFCParamList *param_list) {
+    CFCVariable **vars = CFCParamList_get_variables(param_list);
+    int num_vars = CFCParamList_num_vars(param_list);
+    char *arg_list = CFCUtil_strdup("");
+    for (int i = 0; i < num_vars; i++) {
+        if (i > 0) {
+            arg_list = CFCUtil_cat(arg_list, ", ", NULL);
+        }
+        CFCType *type = CFCVariable_get_type(vars[i]);
+        const char *type_str = CFCType_to_c(type);
+        char *new_arg_list;
+        if (CFCType_is_primitive(type)) {
+            new_arg_list = CFCUtil_sprintf("%scontext->args[%d].%s_",
+                                           arg_list, i, type_str);
+            FREEMEM(arg_list);
+            arg_list = new_arg_list;
+        }
+        else if (CFCType_is_object(type)) {
+            new_arg_list = CFCUtil_sprintf("%s(%s)context->args[%d].ptr",
+                               arg_list, type_str, i);
+            FREEMEM(arg_list);
+            arg_list = new_arg_list;
+        }
+        else {
+            CFCUtil_die("Unexpected type: %s", type_str);
+        }
+    }
+    return arg_list;
+}
+
+/* Generate a wrapper routine for instance methods which conforms to the
+ * requirements of `Err_trap`.
+ */
+char*
+S_gen_meth_trap(CFCMethod *method, CFCClass *invoker) {
+    CFCParamList *param_list = CFCMethod_get_param_list(method);
+    char *meth_type_c = CFCMethod_full_typedef(method, invoker);
+    char *full_meth = CFCMethod_full_method_sym(method, invoker);
+    const char *class_var = CFCClass_full_class_var(invoker);
+    char *arg_list = S_gen_trap_arg_list(param_list);
+
+    CFCType *return_type = CFCMethod_get_return_type(method);
+    char *maybe_retval = CFCUtil_strdup("");
+    if (CFCType_is_void(return_type)) {
+        maybe_retval = CFCUtil_strdup("");
+    }
+    else {
+        maybe_retval = CFCUtil_sprintf("context->retval.%s = ",
+                                       S_choose_any_t(return_type));
+    }
+
+    const char pattern[] =
+        "static void\n"
+        "S_run_%s(void *vcontext) {\n"
+        "    CFBindTrapContext *context = (CFBindTrapContext*)vcontext;\n"
+        "    %s method = CFISH_METHOD_PTR(%s, %s);\n"
+        "    %smethod(%s);\n"
+        "}\n"
+        ;
+    char *content
+        = CFCUtil_sprintf(pattern, full_meth, meth_type_c, class_var,
+                          full_meth, maybe_retval, arg_list);
+
+    FREEMEM(arg_list);
+    FREEMEM(maybe_retval);
+    FREEMEM(full_meth);
+    FREEMEM(meth_type_c);
+    return content;
+}
+
+char*
 CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     CFCParamList *param_list  = CFCMethod_get_param_list(method);
+    char *meth_trap  = S_gen_meth_trap(method, invoker);
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
 
     char pattern[] =
+        "%s\n" // meth trap routine
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
@@ -536,12 +609,13 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "    Py_RETURN_NONE;\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, meth_sym, meth_top,
+    char *wrapper = CFCUtil_sprintf(pattern, meth_trap, meth_sym, meth_top,
                                     increfs, decrefs);
     FREEMEM(decrefs);
     FREEMEM(increfs);
     FREEMEM(meth_sym);
     FREEMEM(meth_top);
+    FREEMEM(meth_trap);
 
     return wrapper;
 }
