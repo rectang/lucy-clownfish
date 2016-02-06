@@ -39,6 +39,7 @@ def ext_build_dir(base):
 # CFLAGS.  Add the Python headers include dir to CFLAGS.
 compiler = distutils.ccompiler.new_compiler()
 cflags = sysconfig.get_config_var('CFLAGS')
+cflags = "-Wsign-compare -Wunreachable-code -fno-common -dynamic -DNDEBUG -g -fwrapv -O3 -Wall -Wstrict-prototypes -arch x86_64  -g"
 cflags = cflags + " -I" + sysconfig.get_path('include')
 compiler_type = distutils.ccompiler.get_default_compiler()
 
