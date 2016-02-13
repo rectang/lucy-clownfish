@@ -70,54 +70,6 @@ S_build_py_args(CFCParamList *param_list) {
 static struct {
     const char *key;
     const char *value;
-} run_trapped_primitive_map[] = {
-    {"int8_t", "CFBIND_RUN_TRAPPED_int8_t"},
-    {"int16_t", "CFBIND_RUN_TRAPPED_int16_t"},
-    {"int32_t", "CFBIND_RUN_TRAPPED_int32_t"},
-    {"int64_t", "CFBIND_RUN_TRAPPED_int64_t"},
-    {"uint8_t", "CFBIND_RUN_TRAPPED_uint8_t"},
-    {"uint16_t", "CFBIND_RUN_TRAPPED_uint16_t"},
-    {"uint32_t", "CFBIND_RUN_TRAPPED_uint32_t"},
-    {"uint64_t", "CFBIND_RUN_TRAPPED_uint64_t"},
-    {"char", "CFBIND_RUN_TRAPPED_char"},
-    {"short", "CFBIND_RUN_TRAPPED_short"},
-    {"int", "CFBIND_RUN_TRAPPED_int"},
-    {"long", "CFBIND_RUN_TRAPPED_long"},
-    {"size_t", "CFBIND_RUN_TRAPPED_size_t"},
-    {"bool", "CFBIND_RUN_TRAPPED_bool"},
-    {"float", "CFBIND_RUN_TRAPPED_float"},
-    {"double", "CFBIND_RUN_TRAPPED_double"},
-    {NULL, NULL}
-};
-
-static const char*
-S_choose_run_trapped(CFCType *return_type) {
-    if (CFCType_is_void(return_type)) {
-        return "CFBIND_RUN_TRAPPED_void";
-    }
-    else if (CFCType_incremented(return_type)) {
-        return "CFBIND_RUN_TRAPPED_inc_obj";
-    }
-    else if (CFCType_is_object(return_type)) {
-        return "CFBIND_RUN_TRAPPED_obj";
-    }
-    else if (CFCType_is_primitive(return_type)) {
-        const char *specifier = CFCType_get_specifier(return_type);
-        for (int i = 0; run_trapped_primitive_map[i].key != NULL; i++) {
-            if (strcmp(run_trapped_primitive_map[i].key, specifier) == 0) {
-                return run_trapped_primitive_map[i].value;
-            }
-        }
-    }
-
-    CFCUtil_die("Unexpected return type: %s",
-                CFCType_to_c(return_type));
-    return NULL; // Unreachable
-}
-
-static struct {
-    const char *key;
-    const char *value;
 } any_t_member_map[] = {
     {"int8_t", "int8_t_"},
     {"int16_t", "int16_t_"},
@@ -516,11 +468,13 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
         if (!arg_parsing) {
             return NULL;
         }
+        char *decs = S_gen_decs(param_list, 1);
         char pattern[] =
             "(PyObject *self, PyObject *args, PyObject *kwargs) {\n"
+            "%s" // decs
             "%s"
             ;
-        char *result = CFCUtil_sprintf(pattern, arg_parsing);
+        char *result = CFCUtil_sprintf(pattern, decs, arg_parsing);
         FREEMEM(arg_parsing);
         return result;
     }
@@ -668,7 +622,6 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
-    const char *run_trapped = S_choose_run_trapped(return_type);
     char *invocation = S_gen_meth_invocation(method, invoker);
 
     char pattern[] =
@@ -712,6 +665,7 @@ S_gen_ctor_invocation(CFCFunction *init_func, CFCClass *invoker) {
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
+    char *decs       = S_gen_decs(param_list, 1);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
     const char *class_var  = CFCClass_full_class_var(invoker);
@@ -732,6 +686,7 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     char pattern[] =
         "static PyObject*\n"
         "S_%s_PY_NEW(PyTypeObject *type, PyObject *args, PyObject *kwargs) {\n"
+        "%s" // decs
         "%s" // arg_parsing
         "%s" // increfs
         "    context.args[0].ptr = CFISH_Class_Make_Obj(%s);\n"
@@ -739,9 +694,10 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         "    return (PyObject*)%s(%s);\n"
         "}\n"
         ;
-    char *wrapper = CFCUtil_sprintf(pattern, struct_sym,
+    char *wrapper = CFCUtil_sprintf(pattern, struct_sym, decs,
                                     arg_parsing, increfs, class_var,
                                     decrefs, func_name, arg_list);
+    FREEMEM(decs);
     FREEMEM(arg_list);
     FREEMEM(func_name);
     FREEMEM(decrefs);
