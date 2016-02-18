@@ -580,13 +580,11 @@ S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
         maybe_return = CFCUtil_strdup("    Py_RETURN_NONE;\n");
     }
     else {
-        char *ret = CFCUtil_sprintf("context.retval.%s",
-                                    S_choose_any_t(return_type));
-        maybe_retval = CFCUtil_sprintf("%s = ", ret);
-        char *conv = CFCPyTypeMap_c_to_py(return_type, ret);
+        maybe_retval = CFCUtil_sprintf("%s retvalCF = ",
+                                       CFCType_to_c(return_type));
+        char *conv = CFCPyTypeMap_c_to_py(return_type, "retvalCF");
         maybe_return = CFCUtil_sprintf("    return %s;\n", conv);
         FREEMEM(conv);
-        FREEMEM(ret);
     }
 
     const char pattern[] =
