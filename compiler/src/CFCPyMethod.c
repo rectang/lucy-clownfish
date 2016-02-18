@@ -129,10 +129,10 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
             if (val && strcmp(val, "NULL") != 0) {
                 const char pattern[] =
                     "    const char arg_%s_DEFAULT[] = %s;\n"
-                    "    cfargs[%d].ptr = CFISH_SSTR_WRAP_UTF8(\n"
+                    "    %s_ARG = CFISH_SSTR_WRAP_UTF8(\n"
                     "        arg_%s_DEFAULT, sizeof(arg_%s_DEFAULT) - 1);\n"
                     ;
-                result = CFCUtil_sprintf(pattern, var_name, val, tick,
+                result = CFCUtil_sprintf(pattern, var_name, val, var_name,
                                          var_name, var_name);
             }
         }
@@ -146,17 +146,17 @@ S_gen_declaration(CFCVariable *var, const char *val, int tick) {
                 ) {
                 const char *class_var = CFCType_get_class_var(type);
                 char pattern[] =
-                    "    CFBindArg wrap_arg_%s = {%s, &cfargs[%d].ptr};\n"
+                    "    CFBindArg wrap_arg_%s = {%s, &%s_ARG};\n"
                     ;
-                result = CFCUtil_sprintf(pattern, var_name, class_var, tick);
+                result = CFCUtil_sprintf(pattern, var_name, class_var,
+                                         var_name);
             }
         }
     }
     else if (CFCType_is_primitive(type)) {
         if (val) {
-            char pattern[] = "    cfargs[%d].%s = %s;\n";
-            const char *member = S_choose_any_t(type);
-            result = CFCUtil_sprintf(pattern, tick, member, val);
+            char pattern[] = "    %s_ARG = %s;\n";
+            result = CFCUtil_sprintf(pattern, var_name, val);
         }
     }
     else {
@@ -193,7 +193,7 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
         if (value != NULL) {
             maybe_maybe = "maybe_";
         }
-        var_name = CFCUtil_sprintf("cfargs[%d].%s_", tick, dest_name);
+        var_name = CFCUtil_sprintf("%s_ARG", CFCVariable_get_name(var));
     }
     else if (CFCType_is_object(type)) {
         if (CFCType_nullable(type) ||
@@ -203,15 +203,15 @@ S_gen_target(CFCVariable *var, const char *value, int tick) {
         }
         if (strcmp(specifier, "cfish_String") == 0) {
             dest_name = "string";
-            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
+            var_name = CFCUtil_sprintf("%s_ARG", CFCVariable_get_name(var));
         }
         else if (strcmp(specifier, "cfish_Hash") == 0) {
             dest_name = "hash";
-            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
+            var_name = CFCUtil_sprintf("%s_ARG", CFCVariable_get_name(var));
         }
         else if (strcmp(specifier, "cfish_Vector") == 0) {
             dest_name = "vec";
-            var_name = CFCUtil_sprintf("cfargs[%d].ptr", tick);
+            var_name = CFCUtil_sprintf("%s_ARG", CFCVariable_get_name(var));
         }
         else {
             dest_name = "obj";
@@ -488,9 +488,11 @@ S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     for (int i = first_tick;i < num_vars; i++) {
         CFCType *type = CFCVariable_get_type(vars[i]);
         if (CFCType_decremented(type)) {
+            const char *name = CFCVariable_get_name(vars[i]);
+            const char *specifier = CFCType_get_specifier(type);
             char pattern[] =
-                "    cfargs[%d].ptr = CFISH_INCREF(cfargs[%d].ptr);\n";
-            char *incref = CFCUtil_sprintf(pattern, i, i);
+                "    %s_ARG = (%s*)CFISH_INCREF(%s_ARG);\n";
+            char *incref = CFCUtil_sprintf(pattern, name, specifier, name);
             content = CFCUtil_cat(content, incref, NULL);
             FREEMEM(incref);
         }
@@ -541,7 +543,7 @@ S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
 }
 
 char*
-S_gen_trap_arg_list(CFCParamList *param_list) {
+S_gen_trap_arg_list(CFCParamList *param_list, int use_bare_self) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
     char *arg_list = CFCUtil_strdup("");
@@ -549,23 +551,14 @@ S_gen_trap_arg_list(CFCParamList *param_list) {
         if (i > 0) {
             arg_list = CFCUtil_cat(arg_list, ", ", NULL);
         }
-        CFCType *type = CFCVariable_get_type(vars[i]);
-        const char *type_str = CFCType_to_c(type);
-        char *new_arg_list;
-        if (CFCType_is_primitive(type)) {
-            new_arg_list = CFCUtil_sprintf("%scontext.args[%d].%s_",
-                                           arg_list, i, type_str);
-            FREEMEM(arg_list);
-            arg_list = new_arg_list;
-        }
-        else if (CFCType_is_object(type)) {
-            new_arg_list = CFCUtil_sprintf("%s(%s)context.args[%d].ptr",
-                               arg_list, type_str, i);
-            FREEMEM(arg_list);
-            arg_list = new_arg_list;
+        if (i == 0 && use_bare_self) {
+            CFCType *type = CFCVariable_get_type(vars[i]);
+            arg_list = CFCUtil_cat(arg_list, "(", CFCType_to_c(type),
+                                   ")self", NULL);
         }
         else {
-            CFCUtil_die("Unexpected type: %s", type_str);
+            arg_list = CFCUtil_cat(arg_list, CFCVariable_get_name(vars[i]),
+                                   "_ARG", NULL);
         }
     }
     return arg_list;
@@ -577,7 +570,7 @@ S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
     char *full_meth = CFCMethod_full_method_sym(method, invoker);
     char *meth_type_c = CFCMethod_full_typedef(method, invoker);
     const char *class_var = CFCClass_full_class_var(invoker);
-    char *arg_list = S_gen_trap_arg_list(param_list);
+    char *arg_list = S_gen_trap_arg_list(param_list, true);
 
     CFCType *return_type = CFCMethod_get_return_type(method);
     char *maybe_retval;
@@ -650,7 +643,7 @@ char*
 S_gen_ctor_invocation(CFCFunction *init_func, CFCClass *invoker) {
     CFCParamList *param_list = CFCFunction_get_param_list(init_func);
     char *init_func_str = CFCFunction_full_func_sym(init_func, invoker);
-    char *arg_list = S_gen_trap_arg_list(param_list);
+    char *arg_list = S_gen_trap_arg_list(param_list, true);
 
     const char pattern[] =
         "    return (PyObject*)%s(%s);\n"
@@ -665,6 +658,8 @@ S_gen_ctor_invocation(CFCFunction *init_func, CFCClass *invoker) {
 char*
 CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
     CFCParamList *param_list  = CFCFunction_get_param_list(init_func);
+    const char *self_type
+        = CFCType_to_c(CFCFunction_get_return_type(init_func));
     char *decs       = S_gen_decs(param_list, 1);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
     char *decrefs    = S_gen_trap_decrefs(param_list, 1);
@@ -681,7 +676,7 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         CFCUtil_die("Unexpected arg parsing error for %s",
                     CFCClass_get_name(invoker));
     }
-    char *arg_list = S_gen_trap_arg_list(param_list);
+    char *arg_list = S_gen_trap_arg_list(param_list, true);
 
     char pattern[] =
         "static PyObject*\n"
@@ -689,13 +684,14 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         "%s" // decs
         "%s" // arg_parsing
         "%s" // increfs
-        "    context.args[0].ptr = CFISH_Class_Make_Obj(%s);\n"
+        "    %s self = (%s)CFISH_Class_Make_Obj(%s);\n"
         "%s" // decrefs
         "    return (PyObject*)%s(%s);\n"
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, struct_sym, decs,
-                                    arg_parsing, increfs, class_var,
+                                    arg_parsing, increfs, self_type,
+                                    self_type, class_var,
                                     decrefs, func_name, arg_list);
     FREEMEM(decs);
     FREEMEM(arg_list);
