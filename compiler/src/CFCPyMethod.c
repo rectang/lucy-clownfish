@@ -500,13 +500,12 @@ S_gen_arg_increfs(CFCParamList *param_list, int first_tick) {
     return content;
 }
 
-// Prep any decrefs for running inside `CFBind_run_trapped`.  These decrefs
-// will run whether or not an exception is trapped.
+// Prep refcount decrement calls to follow the Clownfish subroutine
+// invocation.
 char*
-S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
+S_gen_decrefs(CFCParamList *param_list, int first_tick) {
     CFCVariable **vars = CFCParamList_get_variables(param_list);
     int num_vars = CFCParamList_num_vars(param_list);
-    int num_decrefs = 0;
     char *decrefs = CFCUtil_strdup("");
 
     for (int i = first_tick; i < num_vars; i++) {
@@ -520,23 +519,9 @@ S_gen_trap_decrefs(CFCParamList *param_list, int first_tick) {
              || strcmp(specifier, "cfish_Vector") == 0
              || strcmp(specifier, "cfish_Hash") == 0
             ) {
-            char pattern[] = "%s    decrefs[%d].ptr = cfargs[%d].ptr;\n";
-            char *temp = CFCUtil_sprintf(pattern, decrefs, num_decrefs, i);
-            FREEMEM(decrefs);
-            decrefs = temp;
-            num_decrefs++;
+            decrefs = CFCUtil_cat(decrefs, "    CFISH_DECREF(", micro_sym,
+                                  "_ARG);\n", NULL);
         }
-    }
-
-    if (num_decrefs) {
-        char pattern[] =
-            "    cfbind_any_t decrefs[%d];\n"
-            "    context.decrefs = decrefs;\n"
-            "%s"
-            ;
-        char *temp = CFCUtil_sprintf(pattern, num_decrefs, decrefs);
-        FREEMEM(decrefs);
-        decrefs = temp;
     }
 
     return decrefs;
@@ -574,31 +559,23 @@ S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
 
     CFCType *return_type = CFCMethod_get_return_type(method);
     char *maybe_retval;
-    char *maybe_return;
     if (CFCType_is_void(return_type)) {
         maybe_retval = CFCUtil_strdup("");
-        maybe_return = CFCUtil_strdup("    Py_RETURN_NONE;\n");
     }
     else {
         maybe_retval = CFCUtil_sprintf("%s retvalCF = ",
                                        CFCType_to_c(return_type));
-        char *conv = CFCPyTypeMap_c_to_py(return_type, "retvalCF");
-        maybe_return = CFCUtil_sprintf("    return %s;\n", conv);
-        FREEMEM(conv);
     }
 
     const char pattern[] =
         "    %s method = CFISH_METHOD_PTR(%s, %s);\n"
         "    %smethod(%s);\n"
-        "%s"
         ;
     char *content
         = CFCUtil_sprintf(pattern, meth_type_c, class_var,
-                          full_meth, maybe_retval, arg_list,
-                          maybe_return);
+                          full_meth, maybe_retval, arg_list);
 
     FREEMEM(arg_list);
-    FREEMEM(maybe_return);
     FREEMEM(maybe_retval);
     FREEMEM(full_meth);
     FREEMEM(meth_type_c);
@@ -612,20 +589,34 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
     char *meth_sym   = CFCMethod_full_method_sym(method, invoker);
     char *meth_top   = S_meth_top(method, invoker);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
-    char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    char *decrefs    = S_gen_decrefs(param_list, 1);
     char *invocation = S_gen_meth_invocation(method, invoker);
+    char *ret;
+    if (CFCType_is_void(return_type)) {
+        ret = CFCUtil_strdup("    Py_RETURN_NONE;\n");
+    }
+    else if (CFCType_incremented(return_type)) {
+        ret = CFCUtil_strdup("    return CFBind_cfish_to_py_zeroref((cfish_Obj*)retvalCF);\n");
+    }
+    else {
+        char *conv = CFCPyTypeMap_c_to_py(return_type, "retvalCF");
+        ret = CFCUtil_sprintf("    return %s;\n", conv);
+        FREEMEM(conv);
+    }
 
     char pattern[] =
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
         "    cfargs[0].ptr = self;\n"
-        "%s" // decrefs
         "%s" // invocation
+        "%s" // decrefs
+        "%s" // ret
         "}\n"
         ;
     char *wrapper = CFCUtil_sprintf(pattern, meth_sym, meth_top,
-                                    increfs, decrefs, invocation);
+                                    increfs, invocation, decrefs, ret);
+    FREEMEM(ret);
     FREEMEM(invocation);
     FREEMEM(decrefs);
     FREEMEM(increfs);
@@ -660,7 +651,7 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         = CFCType_to_c(CFCFunction_get_return_type(init_func));
     char *decs       = S_gen_decs(param_list, 1);
     char *increfs    = S_gen_arg_increfs(param_list, 1);
-    char *decrefs    = S_gen_trap_decrefs(param_list, 1);
+    char *decrefs    = S_gen_decrefs(param_list, 1);
     const char *class_var  = CFCClass_full_class_var(invoker);
     const char *struct_sym = CFCClass_full_struct_sym(invoker);
     char *func_name = CFCFunction_full_func_sym(init_func, invoker);
