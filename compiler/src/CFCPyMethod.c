@@ -508,25 +508,29 @@ S_gen_meth_invocation(CFCMethod *method, CFCClass *invoker) {
     char *arg_list = S_gen_trap_arg_list(param_list, true);
 
     CFCType *return_type = CFCMethod_get_return_type(method);
-    char *maybe_retval;
+    char *maybe_declare;
+    const char *maybe_assign;
     if (CFCType_is_void(return_type)) {
-        maybe_retval = CFCUtil_strdup("");
+        maybe_declare = CFCUtil_strdup("");
+        maybe_assign = "";
     }
     else {
-        maybe_retval = CFCUtil_sprintf("%s retvalCF = ",
-                                       CFCType_to_c(return_type));
+        maybe_declare = CFCUtil_sprintf("    %s retvalCF;\n",
+                                        CFCType_to_c(return_type));
+        maybe_assign = "retvalCF = ";
     }
 
     const char pattern[] =
+        "%s"
         "    %s method = CFISH_METHOD_PTR(%s, %s);\n"
-        "    %smethod(%s);\n"
+        "    CFBIND_TRY(%smethod(%s));\n"
         ;
     char *content
-        = CFCUtil_sprintf(pattern, meth_type_c, class_var,
-                          full_meth, maybe_retval, arg_list);
+        = CFCUtil_sprintf(pattern, maybe_declare, meth_type_c, class_var,
+                          full_meth, maybe_assign, arg_list);
 
     FREEMEM(arg_list);
-    FREEMEM(maybe_retval);
+    FREEMEM(maybe_declare);
     FREEMEM(full_meth);
     FREEMEM(meth_type_c);
     return content;
@@ -560,6 +564,9 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "%s" // increfs
         "%s" // invocation
         "%s" // decrefs
+        "    if (CFBind_migrate_cferr()) {\n"
+        "        return NULL;\n"
+        "    }\n"
         "%s" // ret
         "}\n"
         ;
