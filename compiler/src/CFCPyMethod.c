@@ -67,50 +67,6 @@ S_build_py_args(CFCParamList *param_list) {
     return py_args;
 }
 
-static struct {
-    const char *key;
-    const char *value;
-} any_t_member_map[] = {
-    {"int8_t", "int8_t_"},
-    {"int16_t", "int16_t_"},
-    {"int32_t", "int32_t_"},
-    {"int64_t", "int64_t_"},
-    {"uint8_t", "uint8_t_"},
-    {"uint16_t", "uint16_t_"},
-    {"uint32_t", "uint32_t_"},
-    {"uint64_t", "uint64_t_"},
-    {"char", "char_"},
-    {"short", "short_"},
-    {"int", "int_"},
-    {"long", "long_"},
-    {"size_t", "size_t_"},
-    {"bool", "bool_"},
-    {"float", "float_"},
-    {"double", "double_"},
-    {NULL, NULL}
-};
-
-/* Given a type, choose the corresponding name of the member with that type in
- * the cfbind_any_t union.
- */
-static const char*
-S_choose_any_t(CFCType *type) {
-    if (CFCType_is_object(type)) {
-        return "ptr";
-    }
-    else if (CFCType_is_primitive(type)) {
-        const char *specifier = CFCType_get_specifier(type);
-        for (int i = 0; any_t_member_map[i].key != NULL; i++) {
-            if (strcmp(any_t_member_map[i].key, specifier) == 0) {
-                return any_t_member_map[i].value;
-            }
-        }
-    }
-    CFCUtil_die("Unexpected return type: %s",
-                CFCType_to_c(type));
-    return NULL; // Unreachable
-}
-
 /* Some of the ParseTuple conversion routines provided by the Python-flavored
  * CFBind module accept a CFBindArg instead of just a pointer to the value
  * itself.  This routine generates the declarations for those CFBindArg
@@ -276,9 +232,6 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
     }
 
     char parse_pattern[] =
-        "    CFBindTrapContext context = {{0}};\n"
-        "    cfbind_any_t cfargs[%d] = {{0}};\n"
-        "    context.args = cfargs;\n"
         "%s"
         "    char *keywords[] = {%sNULL};\n"
         "    char *fmt = \"%s\";\n"
@@ -286,7 +239,7 @@ S_gen_arg_parsing(CFCParamList *param_list, int first_tick, char **error) {
         "        keywords%s);\n"
         "    if (!ok) { return NULL; }\n"
         ;
-    content = CFCUtil_sprintf(parse_pattern, num_vars, declarations, keywords,
+    content = CFCUtil_sprintf(parse_pattern, declarations, keywords,
                               format_str, targets);
 
 CLEAN_UP_AND_RETURN:
@@ -453,9 +406,6 @@ S_meth_top(CFCMethod *method, CFCClass *invoker) {
         char pattern[] =
             "(PyObject *self, PyObject *unused) {\n"
             "    CFISH_UNUSED_VAR(unused);\n"
-            "    CFBindTrapContext context = {{0}};\n"
-            "    cfbind_any_t cfargs[1] = {{0}};\n"
-            "    context.args = cfargs;\n"
             ;
         return CFCUtil_sprintf(pattern);
     }
@@ -608,7 +558,6 @@ CFCPyMethod_wrapper(CFCMethod *method, CFCClass *invoker) {
         "static PyObject*\n"
         "S_%s%s"
         "%s" // increfs
-        "    cfargs[0].ptr = self;\n"
         "%s" // invocation
         "%s" // decrefs
         "%s" // ret

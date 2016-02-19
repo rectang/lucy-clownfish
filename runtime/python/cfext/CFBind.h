@@ -38,33 +38,6 @@ struct cfish_String;
 void
 CFBind_reraise_pyerr(struct cfish_Class *err_klass, struct cfish_String *mess);
 
-typedef union {
-    void*    ptr;
-    int8_t   int8_t_;
-    int16_t  int16_t_;
-    int32_t  int32_t_;
-    int64_t  int64_t_;
-    uint8_t  uint8_t_;
-    uint16_t uint16_t_;
-    uint32_t uint32_t_;
-    uint64_t uint64_t_;
-    int      char_;
-    short    short_;
-    int      int_;
-    long     long_;
-    size_t   size_t_;
-    bool     bool_;
-    float    float_;
-    double   double_;
-} cfbind_any_t;
-
-typedef struct CFBindTrapContext {
-    cfbind_any_t  retval;
-    cfbind_any_t *args;
-    void         *decrefs;
-    int           num_decrefs;
-} CFBindTrapContext;
-
 /** Null-safe invocation of Obj_To_Host.
   */
 static CFISH_INLINE PyObject*
