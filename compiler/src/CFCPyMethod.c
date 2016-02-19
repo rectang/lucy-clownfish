@@ -614,8 +614,12 @@ CFCPyMethod_constructor_wrapper(CFCFunction *init_func, CFCClass *invoker) {
         "%s" // decs
         "%s" // arg_parsing
         "%s" // increfs
-        "    %s self = %s(%s);\n"
+        "    %s self = NULL;\n"
+        "    CFBIND_TRY(self = %s(%s));\n"
         "%s" // decrefs
+        "    if (CFBind_migrate_cferr()) {\n"
+        "        return NULL;\n"
+        "    }\n"
         "    return (PyObject*)self;\n"
         "}\n"
         ;
