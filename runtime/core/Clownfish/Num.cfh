@@ -39,13 +39,17 @@ public final class Clownfish::Float {
     void*
     To_Host(Float *self);
 
-    /** Return the value of the Float.
+    /** Get the value of the Float.
+     *
+     * @return the Float's value
      */
     public double
     Get_Value(Float *self);
 
     /** Convert the Float to an integer, truncating toward zero.  Throw an
      * exception if the value is out of the range of an `int64_t`.
+     *
+     * @return an integer, possibly truncated
      */
     public int64_t
     To_I64(Float *self);
@@ -58,6 +62,7 @@ public final class Clownfish::Float {
 
     /** Indicate whether two numbers are the same.
      *
+     * @param other the item to test against
      * @return true if `other` is a Float or Integer with the same value as
      * `self`.
      */
@@ -68,6 +73,7 @@ public final class Clownfish::Float {
      * another.  Throws an exception if `other` is neither a Float nor an
      * Integer.
      *
+     * @param other the item to compare against
      * @return 0 if the numbers are equal, a negative number if `self` is
      * less than `other`, and a positive number if `self` is greater than
      * `other`.

@@ -28,12 +28,16 @@ public abstract class Clownfish::Obj {
     public inert Obj*
     init(Obj* self);
 
-    /** Return a host-language object wrapper for this object.
+    /** Get a host-language object wrapper for this object.
+     *
+     * @return a host object which wraps this Clownfish object
      */
     void*
     To_Host(Obj *self);
 
-    /** Return a clone of the object.
+    /** Create a clone of the object.
+     *
+     * @return an equivalent object
      */
     public abstract incremented Obj*
     Clone(Obj *self);
@@ -42,6 +46,7 @@ public abstract class Clownfish::Obj {
      * memory address.
      *
      * @param other Another Obj.
+     * @return true if they are the same
      */
     public bool
     Equals(Obj *self, Obj *other);
@@ -63,22 +68,32 @@ public abstract class Clownfish::Obj {
     public void
     Destroy(Obj *self);
 
-    /** Return the object's Class.
+    /** Obtain the object's Class.
+     *
+     * @return a Class object
      */
     public inert Class*
     get_class(Obj *self);
 
-    /** Return the name of the class that the object belongs to.
+    /** Get the name of the class that the object belongs to.
+     *
+     * @return a class name
      */
     public inert String*
     get_class_name(Obj *self);
 
     /** Indicate whether the object is a descendent of `ancestor`.
+     *
+     * @param ancestor a Class to test against
+     * @return true if the object descends from `ancestor`
      */
     public inert bool
     is_a(nullable Obj *self, nullable Class *ancestor);
 
-    /** Generic stringification: "ClassName@hex_mem_address".
+    /** Provide a stringified representation of the object.  The default
+     * implementation yields "ClassName@hex_mem_address".
+     *
+     * @return a String representation of the object
      */
     public incremented String*
     To_String(Obj *self);

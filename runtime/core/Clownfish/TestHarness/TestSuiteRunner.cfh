@@ -53,21 +53,29 @@ class Clownfish::TestHarness::TestSuiteRunner inherits Clownfish::Obj {
     Finish(TestSuiteRunner *self);
 
     /** Return the number of tests run.
+     *
+     * @return a count
      */
     uint32_t
     Get_Num_Tests(TestSuiteRunner *self);
 
     /** Return the number of failed tests.
+     *
+     * @return a count
      */
     uint32_t
     Get_Num_Tests_Failed(TestSuiteRunner *self);
 
     /** Return the number of test batches run.
+     *
+     * @return a count
      */
     uint32_t
     Get_Num_Batches(TestSuiteRunner *self);
 
     /** Return the number of failed test batches.
+     *
+     * @return a count
      */
     uint32_t
     Get_Num_Batches_Failed(TestSuiteRunner *self);

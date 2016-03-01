@@ -24,7 +24,7 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
     size_t     size;
     size_t     cap;
 
-    /** Return a new Vector.
+    /** Create a new Vector.
      *
      * @param capacity Initial number of elements that the object will be able
      * to hold before reallocation.
@@ -44,11 +44,15 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
     To_Host(Vector *self);
 
     /** Push an item onto the end of a Vector.
+     *
+     * @param element the item to be pushed
      */
     public void
     Push(Vector *self, decremented Obj *element = NULL);
 
     /** Push all the elements of another Vector onto the end of this one.
+     *
+     * @param other the elements to be pushed
      */
     public void
     Push_All(Vector *self, Vector *other);
@@ -60,13 +64,19 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
     public incremented nullable Obj*
     Pop(Vector *self);
 
-    /** Insert an element at `tick` moving the following elements.
+    /** Insert an element at `tick`, moving the following elements over.
+     *
+     * @param tick the index at which to insert
+     * @param element the item to be inserted
      */
     public void
     Insert(Vector *self, size_t tick, decremented Obj *element = NULL);
 
     /** Inserts elements from `other` vector at `tick` moving the following
      * elements.
+     *
+     * @param tick the index starting at which elements will be inserted
+     * @param element the elements to be inserted
      */
     public void
     Insert_All(Vector *self, size_t tick, Vector *other);
@@ -78,6 +88,7 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
 
     /** Fetch the element at `tick`.
      *
+     * @param tick the index of the element to be retrieved
      * @return the element or [](@null) if `tick` is out of bounds.
      */
     public nullable Obj*
@@ -85,12 +96,15 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
 
     /** Store an element at index `tick`, possibly displacing an
      * existing element.
+     * @param tick the index at which to store the element
+     * @param elem the item to store
      */
     public void
     Store(Vector *self, size_t tick, decremented Obj *elem = NULL);
 
     /** Replace an element in the Vector with [](@null) and return it.
      *
+     * @param tick the index of the element to delete
      * @return the element stored at `tick` or [](@null) if `tick` is out of
      * bounds.
      */
@@ -99,12 +113,15 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
 
     /** Remove `length` elements from the Vector, starting at `offset`.
      * Move elements over to fill in the gap.
+     * @param offset the index of the first element to be excised
+     * @param length the number of elements to excise
      */
     public void
     Excise(Vector *self, size_t offset, size_t length);
 
     /** Clone the Vector but merely increment the refcounts of its elements
      * rather than clone them.
+     * @return a new Vector
      */
     public incremented Vector*
     Clone(Vector *self);
@@ -127,13 +144,18 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
     public void
     Clear(Vector *self);
 
-    /** Return the size of the Vector.
+    /** Get the number of elements the Vector is defined to hold, which is one
+     * more than the highest valid tick.
+     *
+     * @return the size of the Vector
      */
     public size_t
     Get_Size(Vector *self);
 
     /** Return the capacity of the Vector.  This is the maximum number of
      * elements the Vector can hold without reallocation.
+     *
+     * @return capacity measured in potential total elements
      */
     size_t
     Get_Capacity(Vector *self);
@@ -144,12 +166,14 @@ public final class Clownfish::Vector nickname Vec inherits Clownfish::Obj {
      *
      * @param offset The index of the element to start at.
      * @param length The maximum number of elements to slice.
+     * @return a new Vector
      */
     public incremented Vector*
     Slice(Vector *self, size_t offset, size_t length);
 
     /** Equality test.
      *
+     * @param other the object to test against for equality
      * @return true if `other` is a Vector with the same values as `self`.
      * Values are compared using their respective `Equals` methods.
      */
