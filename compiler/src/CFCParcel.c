@@ -776,7 +776,7 @@ S_parse_json_string(const char **json) {
     }
     JSONNode *node = (JSONNode*)calloc(1, sizeof(JSONNode));
     node->type = JSON_STRING;
-    node->string = CFCUtil_strndup(start, text - start);
+    node->string = CFCUtil_strndup(start, (size_t)(text - start));
 
     // Move pointer.
     text++;
