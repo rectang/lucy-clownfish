@@ -202,7 +202,7 @@ Str_Hash_Sum_IMP(String *self) {
     const StrIter_Next_t next = METHOD_PTR(STRINGITERATOR, CFISH_StrIter_Next);
     int32_t code_point;
     while (STR_OOB != (code_point = next(iter))) {
-        hashvalue = ((hashvalue << 5) + hashvalue) ^ code_point;
+        hashvalue = ((hashvalue << 5) + hashvalue) ^ (size_t)code_point;
     }
 
     return hashvalue;
@@ -276,7 +276,7 @@ double
 Str_To_F64_IMP(String *self) {
     char   *end;
     double  value    = strtod(self->ptr, &end);
-    size_t  consumed = end - self->ptr;
+    size_t  consumed = (size_t)(end - self->ptr);
     if (consumed > self->size) { // strtod overran
         value = S_safe_to_f64(self);
     }
@@ -415,7 +415,7 @@ Str_Find_IMP(String *self, String *substring) {
 StringIterator*
 Str_Find_Utf8_IMP(String *self, const char *substring, size_t size) {
     const char *ptr = S_memmem(self, substring, size);
-    return ptr ? StrIter_new(self, ptr - self->ptr) : NULL;
+    return ptr ? StrIter_new(self, (size_t)(ptr - self->ptr)) : NULL;
 }
 
 static const char*
@@ -428,7 +428,7 @@ S_memmem(String *self, const char *substring, size_t size) {
     char first_char = substring[0];
 
     // Naive string search.
-    while (NULL != (ptr = (const char*)memchr(ptr, first_char, end - ptr))) {
+    while (NULL != (ptr = (const char*)memchr(ptr, first_char, (size_t)(end - ptr)))) {
         if (memcmp(ptr, substring, size) == 0) { break; }
         ptr++;
     }
